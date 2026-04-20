@@ -30,4 +30,4 @@ clean:
 commitizen-go: $(GOFILES)
 	CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build -o $@ -ldflags ${REVISION_FLAG}
 
-.PHONY: all install clean 
+.PHONY: all install clean

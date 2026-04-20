@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 
@@ -30,7 +30,10 @@ var (
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.Flags().BoolVarP(&all, "all", "a", false, "tell the command to automatically stage files that have been modified and deleted, but new files you have not told Git about are not affected")
+	doc := "tell the command to automatically stage files" +
+		" that have been modified and deleted, but new files you have" +
+		" not told Git about are not affected"
+	rootCmd.Flags().BoolVarP(&all, "all", "a", false, doc)
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "debug mode, output debug info to debug.log")
 
 	// viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
@@ -41,7 +44,7 @@ func init() {
 
 func initConfig() {
 	if !debug {
-		log.SetOutput(ioutil.Discard)
+		log.SetOutput(io.Discard)
 	} else {
 		f, err := os.OpenFile("debug.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 		if err != nil {
