@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// InstallCmd copies the current binary into Git's exec path as "git-cz".
 var InstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install this tool to git-core as git-cz",

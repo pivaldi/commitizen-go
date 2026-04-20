@@ -3,13 +3,13 @@ package git
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
+// InstallSubCmd copies srcFilePath into Git's exec path as "git-<subCmdName>".
 func InstallSubCmd(srcFilePath, subCmdName string) (string, error) {
 	dstDir, err := execPath()
 	if err != nil {
@@ -26,6 +26,7 @@ func InstallSubCmd(srcFilePath, subCmdName string) (string, error) {
 	return dstFilePath, nil
 }
 
+// IsCurrentDirectoryGitRepo reports whether the current working directory is inside a Git repository.
 func IsCurrentDirectoryGitRepo() (bool, error) {
 	// run git remote command
 	cmd := exec.Command("git", "remote")
@@ -41,7 +42,7 @@ func IsCurrentDirectoryGitRepo() (bool, error) {
 	}
 
 	var result []byte
-	if result, err = ioutil.ReadAll(stderr); err != nil {
+	if result, err = io.ReadAll(stderr); err != nil {
 		return false, err
 	}
 
@@ -52,7 +53,7 @@ func IsCurrentDirectoryGitRepo() (bool, error) {
 	return true, nil
 }
 
-// WorkingTreeRoot return path of the top-level directory of the working tree
+// WorkingTreeRoot returns the absolute path of the top-level directory of the working tree.
 func WorkingTreeRoot() (path string, err error) {
 	output, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
@@ -61,14 +62,17 @@ func WorkingTreeRoot() (path string, err error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// CommitMessage writes message to a temp file and runs "git commit -F <file>", passing -a if all is true.
 func CommitMessage(message []byte, all bool) ([]byte, error) {
 	// save the commit message to temp file
 	var err error
 	var file *os.File
-	if file, err = ioutil.TempFile("", "COMMIT_MESSAGE_"); err != nil {
+	if file, err = os.CreateTemp("", "COMMIT_MESSAGE_"); err != nil {
 		return nil, err
 	}
-	defer os.Remove(file.Name())
+	defer func() {
+		_ = os.Remove(file.Name())
+	}()
 
 	if _, err := file.Write(message); err != nil {
 		return nil, err
@@ -84,20 +88,28 @@ func CommitMessage(message []byte, all bool) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+// copyFile copies the file at srcName to dstName with executable permissions (0755).
 func copyFile(dstName, srcName string) (written int64, err error) {
 	src, err := os.Open(srcName)
 	if err != nil {
 		return
 	}
-	defer src.Close()
+	defer func() {
+		_ = src.Close()
+	}()
+
 	dst, err := os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, 0755)
 	if err != nil {
 		return
 	}
-	defer dst.Close()
+	defer func() {
+		_ = dst.Close()
+	}()
+
 	return io.Copy(dst, src)
 }
 
+// execPath returns the path reported by "git --exec-path" (Git's core executables directory).
 func execPath() (string, error) {
 	cmd := exec.Command("git", "--exec-path")
 	stdout, err := cmd.StdoutPipe()
@@ -109,7 +121,7 @@ func execPath() (string, error) {
 		return "", err
 	}
 
-	result, err := ioutil.ReadAll(stdout)
+	result, err := io.ReadAll(stdout)
 	if err != nil {
 		return "", err
 	}

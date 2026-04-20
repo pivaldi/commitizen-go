@@ -1,9 +1,13 @@
-VERSION := $(shell git describe --abbrev=0)
-COMMIT_REVISION := $(shell git log --pretty=%h -1)
-REVISION_FLAG := "-X github.com/lintingzhen/commitizen-go/cmd.revision=${COMMIT_REVISION} -X github.com/lintingzhen/commitizen-go/cmd.version=${VERSION}"
-TARGET := commitizen-go
-GOFILES := $(wildcard *.go) $(wildcard cmd/*.go) $(wildcard git/*.go) $(wildcard commit/*.go)
+VERSION := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
+BIN := commitizen-go
+TARGET     := git-cz
+BIN_DIR := ./bin
+BIN        := $(BIN_DIR)/$(TARGET)
 GOARCH := $(shell go env GOARCH)
+LDFLAGS    := -ldflags "\
+  -X github.com/lintingzhen/commitizen-go/cmd.Version=${VERSION} \
+  -X github.com/lintingzhen/commitizen-go/cmd.Name=${TARGET}"
+
 
 ifeq ($(OS),Windows_NT)
 	GOOS := windows
@@ -20,14 +24,13 @@ endif
 
 GIT_EXEC_PATH := $(shell git --exec-path)
 
-all: ${TARGET}
-install: 
-	$(COPY) commitizen-go $(GIT_EXEC_PATH)/git-cz
+all: build
+install: build
+	$(COPY) $(BIN) $(GIT_EXEC_PATH)/git-cz
 clean:
-	rm -rf ${TARGET}
-    
+	rm -rf $(BIN_DIR)
 
-commitizen-go: $(GOFILES)
-	CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build -o $@ -ldflags ${REVISION_FLAG}
+build:
+	CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build -o $(BIN) ${LDFLAGS}
 
-.PHONY: all install clean
+.PHONY: all install clean build

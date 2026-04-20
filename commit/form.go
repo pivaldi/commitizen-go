@@ -3,78 +3,88 @@ package commit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 	"text/template"
 
+	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
-	"github.com/AlecAivazis/survey/v2"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
+// FillOutForm presents the commit form to the user and returns the assembled commit message bytes.
 func FillOutForm() ([]byte, error) {
-	// load form
-	if form, tmplText, err := loadForm(); err != nil {
+	form, extract, tmplText, err := loadForm()
+	if err != nil {
 		log.Printf("loadForm failed, err=%v\n", err)
 		return nil, err
-	} else {
-
-		// ask the question
-		answers := map[string]interface{}{}
-		if err := survey.Ask(form, &answers); err != nil {
-			return nil, err
-		}
-
-		// assemble the answers to commit message
-		var buf bytes.Buffer
-		if err := assembleMessage(&buf, tmplText, answers); err != nil {
-			log.Printf("assemble failed, err=%v\n", err)
-		}
-
-		return buf.Bytes(), nil
 	}
+
+	if err := form.Run(); err != nil {
+		return nil, err
+	}
+
+	answers := extract()
+
+	var buf bytes.Buffer
+	if err := assembleMessage(&buf, tmplText, answers); err != nil {
+		log.Printf("assemble failed, err=%v\n", err)
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
+// FormItemOption represents a single selectable option within a select form field.
 type FormItemOption struct {
-	Name string
-	Desc string
+	Name string // value stored in the commit message template
+	Desc string // label shown to the user in the TUI
 }
 
+// FormItem describes one field in the commit form as defined in the config file.
 type FormItem struct {
-	Name     string
-	Desc     string
-	Form     string
-	Options  []*FormItemOption
-	Required bool
+	Name     string            // key used in the message template
+	Desc     string            // prompt text shown to the user
+	Form     string            // field type: "select", "input", or "multiline"
+	Options  []*FormItemOption // options for "select" fields
+	Required bool              // whether the field must be non-empty
 }
 
+// MessageConfig holds the ordered list of form fields and the Go template used to assemble the commit message.
 type MessageConfig struct {
 	Items    []*FormItem
 	Template string
 }
 
-func assembleMessage(buf *bytes.Buffer, tmplText string, answers map[string]interface{}) error {
-	if tmpl, err := template.New("").Parse(tmplText); err != nil {
+// assembleMessage trims whitespace from all string answers, then executes tmplText writing the result to buf.
+func assembleMessage(buf *bytes.Buffer, tmplText string, answers map[string]any) error {
+	tmpl, err := template.New("").Parse(tmplText)
+	if err != nil {
 		return err
-	} else {
-		for k, v := range answers {
-			if option, ok := v.(survey.OptionAnswer); ok {
-				answers[k] = option.Value
-			} else if vString, ok := v.(string); ok {
-				answers[k] = strings.TrimSpace(vString)
-			}
-		}
-		if err := tmpl.Execute(buf, answers); err != nil {
-			return err
-		}
-		return nil
 	}
+	for k, v := range answers {
+		if s, ok := v.(string); ok {
+			answers[k] = strings.TrimSpace(s)
+		}
+	}
+	return tmpl.Execute(buf, answers)
 }
 
-func loadForm() (qs []*survey.Question, _ string, err error) {
+func titleCase(s string) string {
+	c := cases.Title(language.English, cases.NoLower)
+	return c.String(s)
+}
+
+// loadForm builds a huh.Form from the merged default and user config. It returns the form, an extractor
+// that produces the answers map after form.Run(), and the commit message template string.
+func loadForm() (*huh.Form, func() map[string]any, string, error) {
 	config := struct{ Message MessageConfig }{}
 	if err := json.Unmarshal([]byte(defaultConfig), &config); err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 
 	msgConfig := config.Message
@@ -86,52 +96,72 @@ func loadForm() (qs []*survey.Question, _ string, err error) {
 	} else {
 		if err := sub.Unmarshal(&msgConfig, func(cfg *mapstructure.DecoderConfig) { cfg.ZeroFields = true }); err != nil {
 			log.Printf("ill message in config file, err=%v", err)
-		} else {
-			log.Printf("msg config from file: %v", msgConfig)
-			item := msgConfig.Items[0]
-			log.Printf("msg config item: %s", item.Desc)
-			log.Printf("msg config template: %s", msgConfig.Template)
 		}
 	}
 
-	for _, item := range msgConfig.Items {
-		q := survey.Question{
-			Name: item.Name,
+	values := make([]string, len(msgConfig.Items))
+	fields := make([]huh.Field, 0, len(msgConfig.Items))
+	requireValidator := func(s string) error {
+		if strings.TrimSpace(s) == "" {
+			return errors.New("required")
 		}
-		if item.Required {
-			q.Validate = survey.Required
-		}
+		return nil
+	}
+
+	var style = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		// Background(lipgloss.Color("#3F3F3F")).
+		PaddingLeft(1)
+	// Width(80)
+
+	for i, item := range msgConfig.Items {
 		switch item.Form {
-		case "input":
-			q.Prompt = &survey.Input{
-				Message: item.Desc,
-			}
-		case "multiline":
-			q.Prompt = &survey.Multiline{
-				Message: item.Desc,
-			}
 		case "select":
-			prompt := &survey.Select{
-				Message:  item.Desc,
-				PageSize: 8,
+			opts := make([]huh.Option[string], len(item.Options))
+			for j, opt := range item.Options {
+				name := titleCase(opt.Name)
+				opts[j] = huh.NewOption(name+"\n"+style.Render(opt.Desc), opt.Name)
 			}
-			for _, option := range item.Options {
-				prompt.Options = append(prompt.Options, option.Desc)
+			sel := huh.NewSelect[string]().
+				Title(item.Desc).
+				Options(opts...).
+				Value(&values[i])
+			if item.Required {
+				sel = sel.Validate(requireValidator)
 			}
-			q.Prompt = prompt
-			q.Transform = func(options []*FormItemOption) func(interface{}) interface{} {
-				return func(ans interface{}) (newAns interface{}) {
-					if ans, ok := ans.(survey.OptionAnswer); !ok {
-						return nil
-					} else {
-						ans.Value = options[ans.Index].Name
-						return ans
-					}
-				}
-			}(item.Options)
+			fields = append(fields, sel)
+		case "input":
+			inp := huh.NewInput().
+				Title(titleCase(item.Name) + ":").
+				Placeholder(item.Desc).
+				Value(&values[i])
+			if item.Required {
+				inp = inp.Validate(requireValidator)
+			}
+			fields = append(fields, inp)
+		case "multiline":
+			txt := huh.NewText().
+				Lines(2).
+				Title(strings.ToTitle(item.Name)).
+				Placeholder(item.Desc).
+				Value(&values[i])
+			if item.Required {
+				txt = txt.Validate(requireValidator)
+			}
+			fields = append(fields, txt)
+		default:
+			log.Printf("unknown form type %q for item %q, skipping", item.Form, item.Name)
 		}
-		qs = append(qs, &q)
 	}
 
-	return qs, msgConfig.Template, nil
+	items := msgConfig.Items
+	extract := func() map[string]any {
+		m := make(map[string]any, len(items))
+		for i, item := range items {
+			m[item.Name] = values[i]
+		}
+		return m
+	}
+
+	return huh.NewForm(huh.NewGroup(fields...)), extract, msgConfig.Template, nil
 }

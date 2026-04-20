@@ -13,13 +13,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Execute runs the root Cobra command and returns any error.
 func Execute() error {
 	return rootCmd.Execute()
 }
 
 var (
 	all     bool
-	debug   bool
+	isDebug bool
 	rootCmd = &cobra.Command{
 		Use:  "commitizen-go",
 		Long: `Command line utility to standardize git commit messages, golang version.`,
@@ -34,7 +35,7 @@ func init() {
 		" that have been modified and deleted, but new files you have" +
 		" not told Git about are not affected"
 	rootCmd.Flags().BoolVarP(&all, "all", "a", false, doc)
-	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "debug mode, output debug info to debug.log")
+	rootCmd.PersistentFlags().BoolVarP(&isDebug, "debug", "d", false, "debug mode, output debug info to debug.log")
 
 	// viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 
@@ -42,8 +43,9 @@ func init() {
 	rootCmd.AddCommand(InstallCmd)
 }
 
+// initConfig sets up logging and loads the .git-czrc config file via Viper.
 func initConfig() {
-	if !debug {
+	if !isDebug {
 		log.SetOutput(io.Discard)
 	} else {
 		f, err := os.OpenFile("debug.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
@@ -87,6 +89,7 @@ func initConfig() {
 
 }
 
+// RootCmd is the Cobra handler for the root command: presents the commit form and runs git commit.
 func RootCmd(command *cobra.Command, args []string) {
 	// exit if not git repo
 	if _, err := git.IsCurrentDirectoryGitRepo(); err != nil {
