@@ -1,9 +1,16 @@
 package main
 
 import (
+	"log"
+
 	"github.com/lintingzhen/commitizen-go/cmd"
 )
 
 func main() {
-	cmd.Execute()
+	rootCmd, err := cmd.GetRootCmd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	rootCmd.Execute()
 }

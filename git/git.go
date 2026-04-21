@@ -59,11 +59,12 @@ func WorkingTreeRoot() (path string, err error) {
 	if err != nil {
 		return "", err
 	}
+
 	return strings.TrimSpace(string(output)), nil
 }
 
-// CommitMessage writes message to a temp file and runs "git commit -F <file>", passing -a if all is true.
-func CommitMessage(message []byte, all bool) ([]byte, error) {
+// Commit writes message to a temp file and runs "git commit -F <file>", passing -a if all is true.
+func Commit(message []byte, all bool) ([]byte, error) {
 	// save the commit message to temp file
 	var err error
 	var file *os.File

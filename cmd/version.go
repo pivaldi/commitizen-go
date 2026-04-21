@@ -8,8 +8,10 @@ import (
 )
 
 // Version and Name are injected at build time via -ldflags.
-var Version string = "none"
-var Name string
+var (
+	Version = "none"
+	Name    string
+)
 
 type info struct {
 	time, arch, os, revision string
@@ -67,7 +69,7 @@ func vcsInfo() *info {
 var VersionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information and quit",
-	Run: func(cmd *cobra.Command, args []string) {
+	Run: func(_ *cobra.Command, _ []string) {
 		fmt.Println(buildInfo())
 	},
 }
