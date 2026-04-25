@@ -15,8 +15,7 @@ import (
 
 // newTestRepo creates an in-memory git repository with one initial commit.
 // User is configured as "Test User <test@example.com>" in the repo config so
-// that commits without an explicit Author succeed (go-git v6 requires an author
-// identity to be resolvable from config when none is supplied explicitly).
+// that commits without an explicit Author succeed.
 func newTestRepo(t *testing.T) *gogit.Repository {
 	t.Helper()
 
@@ -25,7 +24,6 @@ func newTestRepo(t *testing.T) *gogit.Repository {
 		t.Fatalf("init in-memory repo: %v", err)
 	}
 
-	// Configure user identity so commits without explicit Author work.
 	cfg, err := repo.Config()
 	if err != nil {
 		t.Fatalf("get config: %v", err)
@@ -66,15 +64,6 @@ func newTestRepo(t *testing.T) *gogit.Repository {
 	return repo
 }
 
-// withRepo overrides the package-level openRepoFn for the duration of t.
-func withRepo(t *testing.T, repo *gogit.Repository) {
-	t.Helper()
-
-	orig := openRepoFn
-	openRepoFn = func() (*gogit.Repository, error) { return repo, nil }
-	t.Cleanup(func() { openRepoFn = orig })
-}
-
 // stageNewFile creates filename in wt, writes content, and stages it.
 func stageNewFile(t *testing.T, wt *gogit.Worktree, filename, content string) {
 	t.Helper()
@@ -92,12 +81,14 @@ func stageNewFile(t *testing.T, wt *gogit.Worktree, filename, content string) {
 }
 
 func TestCommit_basic(t *testing.T) {
+	t.Parallel()
+
 	repo := newTestRepo(t)
 	wt, _ := repo.Worktree()
 	stageNewFile(t, wt, "file.txt", "hello")
-	withRepo(t, repo)
+	client := &Client{repo: repo}
 
-	if err := Commit([]byte("feat: basic commit"), CommitOptions{}); err != nil {
+	if err := client.Commit([]byte("feat: basic commit"), CommitOptions{}); err != nil {
 		t.Fatalf("Commit error: %v", err)
 	}
 
@@ -115,6 +106,8 @@ func TestCommit_basic(t *testing.T) {
 }
 
 func TestCommit_all_stagesTrackedOnly(t *testing.T) {
+	t.Parallel()
+
 	repo := newTestRepo(t)
 	wt, _ := repo.Worktree()
 
@@ -128,9 +121,9 @@ func TestCommit_all_stagesTrackedOnly(t *testing.T) {
 	_, _ = u.Write([]byte("should not be staged"))
 	_ = u.Close()
 
-	withRepo(t, repo)
+	client := &Client{repo: repo}
 
-	if err := Commit([]byte("chore: all flag"), CommitOptions{All: true}); err != nil {
+	if err := client.Commit([]byte("chore: all flag"), CommitOptions{All: true}); err != nil {
 		t.Fatalf("Commit error: %v", err)
 	}
 
@@ -156,12 +149,14 @@ func TestCommit_all_stagesTrackedOnly(t *testing.T) {
 }
 
 func TestCommit_signoff(t *testing.T) {
+	t.Parallel()
+
 	repo := newTestRepo(t)
 	wt, _ := repo.Worktree()
 	stageNewFile(t, wt, "file.txt", "x")
-	withRepo(t, repo)
+	client := &Client{repo: repo}
 
-	err := Commit([]byte("docs: readme"), CommitOptions{
+	err := client.Commit([]byte("docs: readme"), CommitOptions{
 		Signoff: true,
 		Author:  "Alice Dev <alice@example.com>",
 	})
@@ -183,12 +178,14 @@ func TestCommit_signoff(t *testing.T) {
 }
 
 func TestCommit_author(t *testing.T) {
+	t.Parallel()
+
 	repo := newTestRepo(t)
 	wt, _ := repo.Worktree()
 	stageNewFile(t, wt, "file.txt", "x")
-	withRepo(t, repo)
+	client := &Client{repo: repo}
 
-	err := Commit([]byte("fix: author override"), CommitOptions{
+	err := client.Commit([]byte("fix: author override"), CommitOptions{
 		Author: "Bob Builder <bob@example.com>",
 	})
 	if err != nil {
@@ -210,13 +207,15 @@ func TestCommit_author(t *testing.T) {
 }
 
 func TestCommit_amend(t *testing.T) {
+	t.Parallel()
+
 	repo := newTestRepo(t)
 	wt, _ := repo.Worktree()
 	stageNewFile(t, wt, "file.txt", "x")
-	withRepo(t, repo)
+	client := &Client{repo: repo}
 
 	// Second commit — the one we will amend.
-	if err := Commit([]byte("feat: to be amended"), CommitOptions{}); err != nil {
+	if err := client.Commit([]byte("feat: to be amended"), CommitOptions{}); err != nil {
 		t.Fatalf("Commit error: %v", err)
 	}
 
@@ -228,7 +227,7 @@ func TestCommit_amend(t *testing.T) {
 	_ = iter.ForEach(func(_ *object.Commit) error { countBefore++; return nil })
 
 	// Amend: replace the tip commit message.
-	if err := Commit([]byte("feat: amended message"), CommitOptions{Amend: true}); err != nil {
+	if err := client.Commit([]byte("feat: amended message"), CommitOptions{Amend: true}); err != nil {
 		t.Fatalf("amend error: %v", err)
 	}
 

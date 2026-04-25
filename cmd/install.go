@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,39 +12,50 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const subCommandName = "cz"
+
 // InstallCmd copies the current binary into Git's exec path as "git-cz".
-var InstallCmd = &cobra.Command{
-	Use:   "install",
-	Short: "Install this tool to git-core as git-cz",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		appFilePath, _ := exec.LookPath(os.Args[0])
-		path, err := installSubCmd(appFilePath, "cz")
-		if err != nil {
-			return fmt.Errorf("failed to install %s: %w", Name, err)
-		}
+func getInstallCmd() *cobra.Command {
+	var installCmd = &cobra.Command{
+		Use:   "install",
+		Short: "Install this tool to git-core as git-cz",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			appFilePath, err := exec.LookPath(os.Args[0])
+			if err != nil {
+				return fmt.Errorf(`failed to find executble "%s": %w`, os.Args[0], err)
+			}
 
-		fmt.Printf("Install commitizen to %s\n", path)
+			path, err := installSubCmd(cmd.Context(), appFilePath)
+			if err != nil {
+				return fmt.Errorf("failed to install %s: %w", Name, err)
+			}
 
-		return nil
-	},
+			fmt.Printf("Install commitizen to %s\n", path)
+
+			return nil
+		},
+	}
+
+	return installCmd
 }
 
 // installSubCmd copies srcFilePath into Git's exec path as "git-<subCmdName>".
-func installSubCmd(srcFilePath, subCmdName string) (string, error) {
-	dst, err := gitExecPath()
+func installSubCmd(ctx context.Context, srcFilePath string) (string, error) {
+	dst, err := gitExecPath(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	dstFilePath := filepath.Join(dst, "git-"+subCmdName)
+	dstFilePath := filepath.Join(dst, "git-"+subCommandName)
 	if _, err := copyFile(dstFilePath, srcFilePath); err != nil {
-		return dstFilePath, err
+		return "", err
 	}
 
 	return dstFilePath, nil
 }
 
 func copyFile(dstName, srcName string) (int64, error) {
+	//nolint:gosec // srcName is given by os.Args[0]
 	src, err := os.Open(srcName)
 	if err != nil {
 		return 0, fmt.Errorf("open source: %w", err)
@@ -56,11 +68,16 @@ func copyFile(dstName, srcName string) (int64, error) {
 	}
 	defer func() { _ = dst.Close() }()
 
-	return io.Copy(dst, src)
+	nb, err := io.Copy(dst, src)
+	if err != nil {
+		return 0, fmt.Errorf("faild to copy file: %w", err)
+	}
+
+	return nb, nil
 }
 
-func gitExecPath() (string, error) {
-	cmd := exec.Command("git", "--exec-path")
+func gitExecPath(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "--exec-path")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("exec-path pipe: %w", err)

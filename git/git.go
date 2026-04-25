@@ -10,49 +10,35 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
-// CommitOptions configures git.Commit.
+// CommitOptions configures Client.Commit.
 type CommitOptions struct {
-	All    bool
-	Amend  bool
-	// NoVerify — NOTE: go-git v6 does not execute git hooks; this field is reserved
-	// for a future subprocess fallback when hook execution is required.
+	All  bool
+	Amend bool
+	// NoVerify — go-git v6 does not execute hooks; reserved for a future subprocess fallback.
 	NoVerify   bool
 	Signoff    bool
 	AllowEmpty bool
 	Author     string // "Name <email>"; empty = git config identity
 }
 
-// openRepoFn opens the current repository. Swappable in tests.
-var openRepoFn = defaultOpenRepo
+// Client wraps a go-git repository and exposes commit operations.
+type Client struct {
+	repo *gogit.Repository
+}
 
-func defaultOpenRepo() (*gogit.Repository, error) {
+// NewClient opens the git repository that contains the current directory.
+func NewClient() (*Client, error) {
 	repo, err := gogit.PlainOpenWithOptions(".", &gogit.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
 		return nil, fmt.Errorf("open git repository: %w", err)
 	}
 
-	return repo, nil
-}
-
-// IsCurrentDirectoryGitRepo reports whether the current directory is inside a git repository.
-func IsCurrentDirectoryGitRepo() (bool, error) {
-	_, err := openRepoFn()
-	if err != nil {
-		// not a repo is not an error for this function
-		return false, nil
-	}
-
-	return true, nil
+	return &Client{repo: repo}, nil
 }
 
 // WorkingTreeRoot returns the absolute path of the repository's working tree root.
-func WorkingTreeRoot() (string, error) {
-	repo, err := openRepoFn()
-	if err != nil {
-		return "", err
-	}
-
-	wt, err := repo.Worktree()
+func (c *Client) WorkingTreeRoot() (string, error) {
+	wt, err := c.repo.Worktree()
 	if err != nil {
 		return "", fmt.Errorf("get worktree: %w", err)
 	}
@@ -69,22 +55,17 @@ func WorkingTreeRoot() (string, error) {
 // Authors returns a deduplicated, alphabetically sorted list of commit author strings
 // ("Name <email>") from the repository history.
 // The current git config identity is prepended as the first (default) entry.
-func Authors() ([]string, error) {
-	repo, err := openRepoFn()
+func (c *Client) Authors() ([]string, error) {
+	iter, err := c.repo.Log(&gogit.LogOptions{})
 	if err != nil {
-		return nil, err
-	}
-
-	iter, err := repo.Log(&gogit.LogOptions{})
-	if err != nil {
-		// empty repo (no commits yet) — return empty list, not an error
+		// empty repo (no commits yet) — not an error
 		return []string{}, nil
 	}
 
 	seen := make(map[string]struct{})
 	var list []string
-	if err := iter.ForEach(func(c *object.Commit) error {
-		entry := c.Author.Name + " <" + c.Author.Email + ">"
+	if err := iter.ForEach(func(commit *object.Commit) error {
+		entry := commit.Author.Name + " <" + commit.Author.Email + ">"
 		if _, ok := seen[entry]; !ok {
 			seen[entry] = struct{}{}
 			list = append(list, entry)
@@ -97,7 +78,7 @@ func Authors() ([]string, error) {
 
 	sort.Strings(list)
 
-	cfg, err := repo.Config()
+	cfg, err := c.repo.Config()
 	if err == nil && cfg.User.Name != "" {
 		current := cfg.User.Name + " <" + cfg.User.Email + ">"
 		filtered := make([]string, 0, len(list))
@@ -113,13 +94,8 @@ func Authors() ([]string, error) {
 }
 
 // Commit records a commit with msg and the given options.
-func Commit(msg []byte, opts CommitOptions) error {
-	repo, err := openRepoFn()
-	if err != nil {
-		return err
-	}
-
-	wt, err := repo.Worktree()
+func (c *Client) Commit(msg []byte, opts CommitOptions) error {
+	wt, err := c.repo.Worktree()
 	if err != nil {
 		return fmt.Errorf("get worktree: %w", err)
 	}
@@ -128,7 +104,7 @@ func Commit(msg []byte, opts CommitOptions) error {
 	if opts.Signoff {
 		signer := opts.Author
 		if signer == "" {
-			if cfg, err := repo.Config(); err == nil && cfg.User.Name != "" {
+			if cfg, err := c.repo.Config(); err == nil && cfg.User.Name != "" {
 				signer = cfg.User.Name + " <" + cfg.User.Email + ">"
 			}
 		}
@@ -137,9 +113,8 @@ func Commit(msg []byte, opts CommitOptions) error {
 		}
 	}
 
-	// Use CommitOptions.All so that go-git's autoAddModifiedAndDeleted logic is
-	// applied: only tracked modified/deleted files are staged, matching the
-	// semantics of `git commit --all` (untracked files are NOT included).
+	// CommitOptions.All stages only tracked modified/deleted files, matching
+	// `git commit --all` semantics (untracked files are NOT included).
 	commitOpts := &gogit.CommitOptions{
 		All:               opts.All,
 		AllowEmptyCommits: opts.AllowEmpty,
@@ -172,4 +147,3 @@ func parseAuthor(s string) (name, email string) {
 
 	return s, ""
 }
-

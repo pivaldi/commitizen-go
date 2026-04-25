@@ -32,7 +32,7 @@ func GetRootCmd() (*cobra.Command, error) {
 	rootCmd.PersistentFlags().BoolVarP(&isDebug, "debug", "d", false,
 		"debug mode, output debug info to debug.log")
 
-	rootCmd.AddCommand(CommitCmd, IssueCmd, VersionCmd, InstallCmd)
+	rootCmd.AddCommand(getCommitCmd(), getIssueCmd(), getVersionCmd(), getInstallCmd())
 
 	return rootCmd, nil
 }
@@ -60,9 +60,10 @@ func initConfig() error {
 	viper.SetConfigType("json")
 
 	// Repo-root config takes priority over home: add it first so Viper searches it first.
-	workingTreeRoot, err := git.WorkingTreeRoot()
-	if err == nil && workingTreeRoot != "" {
-		viper.AddConfigPath(workingTreeRoot)
+	if client, err := git.NewClient(); err == nil {
+		if root, err := client.WorkingTreeRoot(); err == nil && root != "" {
+			viper.AddConfigPath(root)
+		}
 	}
 	viper.AddConfigPath(home)
 

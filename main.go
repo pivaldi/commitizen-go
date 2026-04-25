@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/lintingzhen/commitizen-go/cmd"
 )
@@ -9,8 +10,20 @@ import (
 func main() {
 	rootCmd, err := cmd.GetRootCmd()
 	if err != nil {
-		log.Fatal(err)
+		fatalError(err)
 	}
 
-	rootCmd.Execute()
+	err = rootCmd.Execute()
+	if err != nil {
+		fatalError(err)
+	}
+
+	os.Exit(0)
+}
+
+func fatalError(err error) {
+	log.SetOutput(os.Stderr)
+
+	//nolint:revive // It's call by main only.
+	log.Fatal(err)
 }

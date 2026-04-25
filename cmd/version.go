@@ -66,10 +66,14 @@ func vcsInfo() *info {
 }
 
 // VersionCmd prints the build version and revision then exits.
-var VersionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print version information and quit",
-	Run: func(_ *cobra.Command, _ []string) {
-		fmt.Println(buildInfo())
-	},
+func getVersionCmd() *cobra.Command {
+	var versionCmd = &cobra.Command{
+		Use:   "version",
+		Short: "Print version information and quit",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Println(buildInfo())
+		},
+	}
+
+	return versionCmd
 }

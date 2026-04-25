@@ -21,15 +21,15 @@ var (
 )
 
 // CommitCmd is the "git cz commit" subcommand.
-var CommitCmd = &cobra.Command{
-	Use:   "commit",
-	Short: "Record changes to the repository",
-	Long:  "Open the commitizen TUI to compose a standardised commit message, then commit using go-git.",
-	RunE:  commitRunE,
-}
+func getCommitCmd() *cobra.Command {
+	var commitCmd = &cobra.Command{
+		Use:   "commit",
+		Short: "Record changes to the repository",
+		Long:  "Open the commitizen TUI to compose a standardised commit message, then commit using go-git.",
+		RunE:  commitRunE,
+	}
 
-func init() {
-	f := CommitCmd.Flags()
+	f := commitCmd.Flags()
 	f.BoolVarP(&commitAll, "all", "a", false,
 		"stage all tracked modified/deleted files before committing")
 	f.BoolVar(&commitAmend, "amend", false,
@@ -42,13 +42,15 @@ func init() {
 		"allow a commit with no changes")
 	f.StringVar(&commitAuthor, "author", "",
 		`override commit author as "Name <email>"`)
+
+	return commitCmd
 }
 
 // loadMessageConfig merges the built-in default with any user override from .git-czrc.
 func loadMessageConfig() (commit.MessageConfig, error) {
 	cfg, err := commit.DefaultMessageConfig()
 	if err != nil {
-		return commit.MessageConfig{}, err
+		return commit.MessageConfig{}, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	sub := viper.Sub("message")
@@ -64,12 +66,9 @@ func loadMessageConfig() (commit.MessageConfig, error) {
 }
 
 func commitRunE(_ *cobra.Command, _ []string) error {
-	if ok, err := git.IsCurrentDirectoryGitRepo(); err != nil || !ok {
-		if err != nil {
-			return fmt.Errorf("does not seem to be a git repo: %w", err)
-		}
-
-		return fmt.Errorf("not a git repository")
+	client, err := git.NewClient()
+	if err != nil {
+		return fmt.Errorf("not a git repository: %w", err)
 	}
 
 	defaults := commit.FormOptions{
@@ -81,7 +80,7 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		Author:     commitAuthor,
 	}
 
-	authors, err := git.Authors()
+	authors, err := client.Authors()
 	if err != nil {
 		log.Printf("could not load author list: %v", err)
 		authors = []string{}
@@ -94,10 +93,10 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 
 	msg, opts, err := commit.FillOutForm(msgCfg, defaults, authors)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to fill form: %w", err)
 	}
 
-	return git.Commit(msg, git.CommitOptions{
+	err = client.Commit(msg, git.CommitOptions{
 		All:        opts.All,
 		Amend:      opts.Amend,
 		NoVerify:   opts.NoVerify,
@@ -105,4 +104,9 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		AllowEmpty: opts.AllowEmpty,
 		Author:     opts.Author,
 	})
+	if err != nil {
+		return fmt.Errorf("failed to commit: %w", err)
+	}
+
+	return nil
 }
