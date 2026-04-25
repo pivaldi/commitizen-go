@@ -69,3 +69,117 @@ func TestAssembleMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildAuthorList_deduplication(t *testing.T) {
+	all := []string{
+		"Alice <alice@example.com>",
+		"Bob <bob@example.com>",
+		"Alice <alice@example.com>",
+	}
+	got := BuildAuthorList(all, "")
+	want := []string{"Alice <alice@example.com>", "Bob <bob@example.com>"}
+	if len(got) != len(want) {
+		t.Fatalf("len: got %d, want %d — list: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestBuildAuthorList_sortOrder(t *testing.T) {
+	all := []string{
+		"Zoe <zoe@example.com>",
+		"Alice <alice@example.com>",
+		"Mia <mia@example.com>",
+	}
+	got := BuildAuthorList(all, "")
+	for i := 1; i < len(got); i++ {
+		if got[i] < got[i-1] {
+			t.Errorf("not sorted at [%d]: %q < %q", i, got[i], got[i-1])
+		}
+	}
+}
+
+func TestBuildAuthorList_currentUserFirst(t *testing.T) {
+	all := []string{
+		"Alice <alice@example.com>",
+		"Bob <bob@example.com>",
+		"Current User <current@example.com>",
+	}
+	current := "Current User <current@example.com>"
+	got := BuildAuthorList(all, current)
+
+	if len(got) == 0 {
+		t.Fatal("empty list")
+	}
+	if got[0] != current {
+		t.Errorf("first entry: got %q, want %q", got[0], current)
+	}
+	for _, a := range got[1:] {
+		if a == current {
+			t.Errorf("current user duplicated in list: %v", got)
+		}
+	}
+}
+
+func TestBuildAuthorList_currentUserNotInHistory(t *testing.T) {
+	all := []string{"Alice <alice@example.com>", "Bob <bob@example.com>"}
+	current := "New User <new@example.com>"
+	got := BuildAuthorList(all, current)
+	if got[0] != current {
+		t.Errorf("first entry: got %q, want %q", got[0], current)
+	}
+	if len(got) != 3 {
+		t.Errorf("len: got %d, want 3 — list: %v", len(got), got)
+	}
+}
+
+func TestFormOptions_anyOptionSet(t *testing.T) {
+	cases := []struct {
+		opts FormOptions
+		want bool
+	}{
+		{FormOptions{}, false},
+		{FormOptions{All: true}, true},
+		{FormOptions{Amend: true}, true},
+		{FormOptions{NoVerify: true}, true},
+		{FormOptions{Signoff: true}, true},
+		{FormOptions{AllowEmpty: true}, true},
+		{FormOptions{Author: "Alice <a@b.com>"}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.opts.anyOptionSet(); got != tc.want {
+			t.Errorf("%+v: anyOptionSet()=%v, want %v", tc.opts, got, tc.want)
+		}
+	}
+}
+
+func TestBuildAuthorList_nilInput(t *testing.T) {
+	got := BuildAuthorList(nil, "")
+	if len(got) != 0 {
+		t.Errorf("expected empty, got %v", got)
+	}
+	got2 := BuildAuthorList(nil, "Alice <alice@example.com>")
+	if len(got2) != 1 || got2[0] != "Alice <alice@example.com>" {
+		t.Errorf("expected [Alice], got %v", got2)
+	}
+}
+
+func TestBuildAuthorList_currentIsOnlyEntry(t *testing.T) {
+	got := BuildAuthorList([]string{"Alice <alice@example.com>"}, "Alice <alice@example.com>")
+	if len(got) != 1 || got[0] != "Alice <alice@example.com>" {
+		t.Errorf("expected [Alice], got %v", got)
+	}
+}
+
+func TestBuildAuthorList_currentAppearsMultipleTimes(t *testing.T) {
+	got := BuildAuthorList(
+		[]string{"Alice <alice@example.com>", "Alice <alice@example.com>"},
+		"Alice <alice@example.com>",
+	)
+	if len(got) != 1 || got[0] != "Alice <alice@example.com>" {
+		t.Errorf("expected [Alice] (len 1), got %v", got)
+	}
+}

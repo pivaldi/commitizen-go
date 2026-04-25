@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -16,27 +18,36 @@ import (
 	"golang.org/x/text/language"
 )
 
-// FillOutForm presents the commit form to the user and returns the assembled commit message bytes.
-func FillOutForm() ([]byte, error) {
-	form, extract, tmplText, err := loadForm()
+// FillOutForm presents the commit TUI form.
+// Group 1: commit message fields (type, scope, subject, body, footer).
+// Group 2: commit options (author, all, amend, no-verify, signoff, allow-empty).
+//
+//	Group 2 is skipped when defaults.anyOptionSet() is true (flags were passed).
+//
+// Returns the assembled commit message bytes and the (possibly user-modified) options.
+func FillOutForm(defaults FormOptions, authors []string) ([]byte, FormOptions, error) {
+	form, extractMsg, extractOpts, tmplText, err := loadForm(defaults, authors)
 	if err != nil {
 		log.Printf("loadForm failed, err=%v\n", err)
-		return nil, err
+
+		return nil, FormOptions{}, fmt.Errorf("load form: %w", err)
 	}
 
 	if err := form.Run(); err != nil {
-		return nil, err
+		return nil, FormOptions{}, fmt.Errorf("failed to run the form: %w", err)
 	}
 
-	answers := extract()
+	answers := extractMsg()
+	opts := extractOpts()
 
 	var buf bytes.Buffer
 	if err := assembleMessage(&buf, tmplText, answers); err != nil {
 		log.Printf("assemble failed, err=%v\n", err)
-		return nil, err
+
+		return nil, FormOptions{}, fmt.Errorf("assemble message: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	return buf.Bytes(), opts, nil
 }
 
 // FormItemOption represents a single selectable option within a select form field.
@@ -60,18 +71,69 @@ type MessageConfig struct {
 	Template string
 }
 
+// FormOptions holds commit option values for Group 2 of the TUI.
+// Used both as flag-derived defaults (input) and as user selections (output).
+type FormOptions struct {
+	All        bool
+	Amend      bool
+	NoVerify   bool
+	Signoff    bool
+	AllowEmpty bool
+	Author     string // "Name <email>"
+}
+
+// anyOptionSet reports true if any commit-option flag was passed.
+// When true, Group 2 of the TUI is skipped.
+func (o FormOptions) anyOptionSet() bool {
+	return o.All || o.Amend || o.NoVerify || o.Signoff || o.AllowEmpty || o.Author != ""
+}
+
+// BuildAuthorList deduplicates all (may contain duplicates), sorts alphabetically,
+// then prepends current as the first entry (removing it from its sorted position if present).
+// If current is empty, the sorted deduplicated list is returned as-is.
+func BuildAuthorList(all []string, current string) []string {
+	seen := make(map[string]struct{})
+	var unique []string
+	for _, a := range all {
+		if _, ok := seen[a]; !ok {
+			seen[a] = struct{}{}
+			unique = append(unique, a)
+		}
+	}
+	slices.Sort(unique)
+
+	if current == "" {
+		return unique
+	}
+
+	filtered := make([]string, 0, len(unique))
+	for _, a := range unique {
+		if a != current {
+			filtered = append(filtered, a)
+		}
+	}
+
+	return append([]string{current}, filtered...)
+}
+
 // assembleMessage trims whitespace from all string answers, then executes tmplText writing the result to buf.
 func assembleMessage(buf *bytes.Buffer, tmplText string, answers map[string]any) error {
 	tmpl, err := template.New("").Parse(tmplText)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse template: %w", err)
 	}
 	for k, v := range answers {
 		if s, ok := v.(string); ok {
 			answers[k] = strings.TrimSpace(s)
 		}
 	}
-	return tmpl.Execute(buf, answers)
+
+	err = tmpl.Execute(buf, answers)
+	if err != nil {
+		return fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return nil
 }
 
 func titleCase(s string) string {
@@ -79,12 +141,10 @@ func titleCase(s string) string {
 	return c.String(s)
 }
 
-// loadForm builds a huh.Form from the merged default and user config. It returns the form, an extractor
-// that produces the answers map after form.Run(), and the commit message template string.
-func loadForm() (*huh.Form, func() map[string]any, string, error) {
+func loadForm(defaults FormOptions, authors []string) (*huh.Form, func() map[string]any, func() FormOptions, string, error) {
 	config := struct{ Message MessageConfig }{}
 	if err := json.Unmarshal([]byte(defaultConfig), &config); err != nil {
-		return nil, nil, "", err
+		return nil, nil, nil, "", fmt.Errorf("failed to unmarshal: %w", err)
 	}
 
 	msgConfig := config.Message
@@ -92,27 +152,27 @@ func loadForm() (*huh.Form, func() map[string]any, string, error) {
 
 	sub := viper.Sub("message")
 	if sub == nil {
-		log.Printf("no message in config file")
+		log.Print("no message in config file")
 	} else {
 		if err := sub.Unmarshal(&msgConfig, func(cfg *mapstructure.DecoderConfig) { cfg.ZeroFields = true }); err != nil {
 			log.Printf("ill message in config file, err=%v", err)
 		}
 	}
 
+	// --- Group 1: commit message fields ---
 	values := make([]string, len(msgConfig.Items))
-	fields := make([]huh.Field, 0, len(msgConfig.Items))
+	msgFields := make([]huh.Field, 0, len(msgConfig.Items))
 	requireValidator := func(s string) error {
 		if strings.TrimSpace(s) == "" {
 			return errors.New("required")
 		}
+
 		return nil
 	}
 
 	var style = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#888888")).
-		// Background(lipgloss.Color("#3F3F3F")).
 		PaddingLeft(1)
-	// Width(80)
 
 	for i, item := range msgConfig.Items {
 		switch item.Form {
@@ -129,7 +189,7 @@ func loadForm() (*huh.Form, func() map[string]any, string, error) {
 			if item.Required {
 				sel = sel.Validate(requireValidator)
 			}
-			fields = append(fields, sel)
+			msgFields = append(msgFields, sel)
 		case "input":
 			inp := huh.NewInput().
 				Title(titleCase(item.Name) + ":").
@@ -138,7 +198,7 @@ func loadForm() (*huh.Form, func() map[string]any, string, error) {
 			if item.Required {
 				inp = inp.Validate(requireValidator)
 			}
-			fields = append(fields, inp)
+			msgFields = append(msgFields, inp)
 		case "multiline":
 			txt := huh.NewText().
 				Lines(2).
@@ -148,20 +208,52 @@ func loadForm() (*huh.Form, func() map[string]any, string, error) {
 			if item.Required {
 				txt = txt.Validate(requireValidator)
 			}
-			fields = append(fields, txt)
+			msgFields = append(msgFields, txt)
 		default:
 			log.Printf("unknown form type %q for item %q, skipping", item.Form, item.Name)
 		}
 	}
 
 	items := msgConfig.Items
-	extract := func() map[string]any {
+	extractMsg := func() map[string]any {
 		m := make(map[string]any, len(items))
 		for i, item := range items {
 			m[item.Name] = values[i]
 		}
+
 		return m
 	}
 
-	return huh.NewForm(huh.NewGroup(fields...)), extract, msgConfig.Template, nil
+	groups := []*huh.Group{huh.NewGroup(msgFields...)}
+
+	// --- Group 2: commit options (skipped when any flag was passed) ---
+	opts := defaults
+	if !defaults.anyOptionSet() {
+		authorOpts := make([]huh.Option[string], len(authors))
+		for i, a := range authors {
+			authorOpts[i] = huh.NewOption(a, a)
+		}
+		if len(authorOpts) == 0 {
+			authorOpts = []huh.Option[string]{huh.NewOption("(no authors found)", "")}
+		}
+
+		authorSel := huh.NewSelect[string]().
+			Title("Author:").
+			Options(authorOpts...).
+			Value(&opts.Author)
+
+		optFields := []huh.Field{
+			authorSel,
+			huh.NewConfirm().Title("Stage all tracked modified/deleted files? (--all)").Value(&opts.All),
+			huh.NewConfirm().Title("Amend last commit? (--amend)").Value(&opts.Amend),
+			huh.NewConfirm().Title("Skip hooks? (--no-verify)").Value(&opts.NoVerify),
+			huh.NewConfirm().Title("Add Signed-off-by trailer? (--signoff)").Value(&opts.Signoff),
+			huh.NewConfirm().Title("Allow empty commit? (--allow-empty)").Value(&opts.AllowEmpty),
+		}
+		groups = append(groups, huh.NewGroup(optFields...))
+	}
+
+	extractOpts := func() FormOptions { return opts }
+
+	return huh.NewForm(groups...), extractMsg, extractOpts, msgConfig.Template, nil
 }

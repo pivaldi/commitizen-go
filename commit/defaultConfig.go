@@ -1,5 +1,6 @@
 package commit
 
+//nolint:revive //it's a template
 var defaultConfig = `{
 	"message": {
 		"items": [
