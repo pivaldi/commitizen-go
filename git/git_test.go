@@ -6,6 +6,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/go-git/go-git/v6/storage/memory"
 
@@ -251,5 +252,98 @@ func TestCommit_amend(t *testing.T) {
 	}
 	if c.Message != "feat: amended message" {
 		t.Errorf("tip message after amend: got %q", c.Message)
+	}
+}
+
+func TestDefaultBaseBranch_fallback(t *testing.T) {
+	t.Parallel()
+
+	// newTestRepo creates a repo with no remotes and commits on the default branch.
+	// go-git initializes with "master" by default.
+	repo := newTestRepo(t)
+	client := &Client{repo: repo}
+
+	base, err := client.DefaultBaseBranch()
+	if err != nil {
+		t.Fatalf("DefaultBaseBranch: %v", err)
+	}
+	if base != "master" {
+		t.Errorf("DefaultBaseBranch = %q, want %q", base, "master")
+	}
+}
+
+func TestDefaultBaseBranch_remote(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+
+	// Simulate refs/remotes/origin/HEAD pointing to "main".
+	// In go-git, set a symbolic reference directly in the storer.
+	symRef := plumbing.NewSymbolicReference(
+		plumbing.ReferenceName("refs/remotes/origin/HEAD"),
+		plumbing.ReferenceName("refs/remotes/origin/main"),
+	)
+	if err := repo.Storer.SetReference(symRef); err != nil {
+		t.Fatalf("set origin/HEAD: %v", err)
+	}
+
+	client := &Client{repo: repo}
+	base, err := client.DefaultBaseBranch()
+	if err != nil {
+		t.Fatalf("DefaultBaseBranch: %v", err)
+	}
+	if base != "main" {
+		t.Errorf("DefaultBaseBranch = %q, want %q", base, "main")
+	}
+}
+
+func TestDefaultBaseBranch_main(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	if err := wt.Checkout(&gogit.CheckoutOptions{
+		Branch: "refs/heads/main",
+		Create: true,
+	}); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+
+	// Remove master so only main exists — isolates the fallback priority.
+	if err := repo.Storer.RemoveReference(plumbing.ReferenceName("refs/heads/master")); err != nil {
+		t.Fatalf("remove master: %v", err)
+	}
+
+	client := &Client{repo: repo}
+	base, err := client.DefaultBaseBranch()
+	if err != nil {
+		t.Fatalf("DefaultBaseBranch: %v", err)
+	}
+	if base != "main" {
+		t.Errorf("DefaultBaseBranch = %q, want %q", base, "main")
+	}
+}
+
+func TestCreateBranch(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+	client := &Client{repo: repo}
+
+	if err := client.CreateBranch("ABC-42@feat@add-oauth-login@550e8400", "master"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+
+	// Verify HEAD points to the new branch.
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	if head.Name().Short() != "ABC-42@feat@add-oauth-login@550e8400" {
+		t.Errorf("HEAD = %q, want new branch", head.Name().Short())
 	}
 }

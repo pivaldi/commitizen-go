@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
@@ -146,4 +147,54 @@ func parseAuthor(s string) (name, email string) {
 	}
 
 	return s, ""
+}
+
+// DefaultBaseBranch resolves the default base branch in priority order:
+//  1. refs/remotes/origin/HEAD
+//  2. "main" if the local ref exists
+//  3. "master" if the local ref exists
+func (c *Client) DefaultBaseBranch() (string, error) {
+	// Try remote HEAD first.
+	if ref, err := c.repo.Reference(plumbing.ReferenceName("refs/remotes/origin/HEAD"), false); err == nil {
+		if ref.Type() == plumbing.SymbolicReference {
+			parts := strings.Split(ref.Target().String(), "/")
+
+			return parts[len(parts)-1], nil
+		}
+	}
+
+	// Fall back to local branches.
+	for _, name := range []string{"main", "master"} {
+		if _, err := c.repo.Reference(plumbing.ReferenceName("refs/heads/"+name), false); err == nil {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not detect default base branch")
+}
+
+// CreateBranch creates a new branch from baseBranch and checks it out.
+func (c *Client) CreateBranch(name, baseBranch string) error {
+	baseRef, err := c.repo.Reference(plumbing.ReferenceName("refs/heads/"+baseBranch), true)
+	if err != nil {
+		return fmt.Errorf("resolve base branch %q: %w", baseBranch, err)
+	}
+
+	wt, err := c.repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("get worktree: %w", err)
+	}
+
+	// Hash and Create together are intentional: go-git sets HEAD to the symbolic
+	// ref (Branch) when Create is true, and uses Hash as the starting commit for
+	// the new branch ref.
+	if err := wt.Checkout(&gogit.CheckoutOptions{
+		Hash:   baseRef.Hash(),
+		Branch: plumbing.ReferenceName("refs/heads/" + name),
+		Create: true,
+	}); err != nil {
+		return fmt.Errorf("create branch %q: %w", name, err)
+	}
+
+	return nil
 }
