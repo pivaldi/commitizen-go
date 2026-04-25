@@ -2,10 +2,6 @@ package git
 
 import (
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -177,54 +173,3 @@ func parseAuthor(s string) (name, email string) {
 	return s, ""
 }
 
-// InstallSubCmd copies srcFilePath into Git's exec path as "git-<subCmdName>".
-func InstallSubCmd(srcFilePath, subCmdName string) (string, error) {
-	dstDir, err := execPath()
-	if err != nil {
-		return "", err
-	}
-
-	subCmdFileName := "git-" + subCmdName
-	dstFilePath := filepath.Join(dstDir, subCmdFileName)
-	if _, err := copyFile(dstFilePath, srcFilePath); err != nil {
-		return dstFilePath, err
-	}
-
-	return dstFilePath, nil
-}
-
-func copyFile(dstName, srcName string) (written int64, err error) {
-	src, err := os.Open(srcName)
-	if err != nil {
-		return
-	}
-	defer func() { _ = src.Close() }()
-
-	dst, err := os.OpenFile(dstName, os.O_WRONLY|os.O_CREATE, 0755)
-	if err != nil {
-		return
-	}
-	defer func() { _ = dst.Close() }()
-
-	return io.Copy(dst, src)
-}
-
-func execPath() (string, error) {
-	cmd := exec.Command("git", "--exec-path")
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("exec-path pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("exec-path start: %w", err)
-	}
-	result, err := io.ReadAll(stdout)
-	if err != nil {
-		return "", fmt.Errorf("exec-path read: %w", err)
-	}
-	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("exec-path wait: %w", err)
-	}
-
-	return strings.TrimSpace(string(result)), nil
-}
