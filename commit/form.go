@@ -12,11 +12,20 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mitchellh/mapstructure"
-	"github.com/spf13/viper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
+
+// DefaultMessageConfig returns the parsed built-in message configuration.
+// Callers may overlay user config on top before passing it to FillOutForm.
+func DefaultMessageConfig() (MessageConfig, error) {
+	config := struct{ Message MessageConfig }{}
+	if err := json.Unmarshal([]byte(defaultConfig), &config); err != nil {
+		return MessageConfig{}, fmt.Errorf("parse default config: %w", err)
+	}
+
+	return config.Message, nil
+}
 
 // FillOutForm presents the commit TUI form.
 // Group 1: commit message fields (type, scope, subject, body, footer).
@@ -25,8 +34,8 @@ import (
 //	Group 2 is skipped when defaults.anyOptionSet() is true (flags were passed).
 //
 // Returns the assembled commit message bytes and the (possibly user-modified) options.
-func FillOutForm(defaults FormOptions, authors []string) ([]byte, FormOptions, error) {
-	form, extractMsg, extractOpts, tmplText, err := loadForm(defaults, authors)
+func FillOutForm(cfg MessageConfig, defaults FormOptions, authors []string) ([]byte, FormOptions, error) {
+	form, extractMsg, extractOpts, tmplText, err := loadForm(cfg, defaults, authors)
 	if err != nil {
 		log.Printf("loadForm failed, err=%v\n", err)
 
@@ -141,27 +150,12 @@ func titleCase(s string) string {
 	return c.String(s)
 }
 
-func loadForm(defaults FormOptions, authors []string) (*huh.Form, func() map[string]any, func() FormOptions, string, error) {
-	config := struct{ Message MessageConfig }{}
-	if err := json.Unmarshal([]byte(defaultConfig), &config); err != nil {
-		return nil, nil, nil, "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	msgConfig := config.Message
-	log.Printf("default config message tmpl: %s", msgConfig.Template)
-
-	sub := viper.Sub("message")
-	if sub == nil {
-		log.Print("no message in config file")
-	} else {
-		if err := sub.Unmarshal(&msgConfig, func(cfg *mapstructure.DecoderConfig) { cfg.ZeroFields = true }); err != nil {
-			log.Printf("ill message in config file, err=%v", err)
-		}
-	}
+func loadForm(cfg MessageConfig, defaults FormOptions, authors []string) (*huh.Form, func() map[string]any, func() FormOptions, string, error) {
+	log.Printf("message tmpl: %s", cfg.Template)
 
 	// --- Group 1: commit message fields ---
-	values := make([]string, len(msgConfig.Items))
-	msgFields := make([]huh.Field, 0, len(msgConfig.Items))
+	values := make([]string, len(cfg.Items))
+	msgFields := make([]huh.Field, 0, len(cfg.Items))
 	requireValidator := func(s string) error {
 		if strings.TrimSpace(s) == "" {
 			return errors.New("required")
@@ -174,7 +168,7 @@ func loadForm(defaults FormOptions, authors []string) (*huh.Form, func() map[str
 		Foreground(lipgloss.Color("#888888")).
 		PaddingLeft(1)
 
-	for i, item := range msgConfig.Items {
+	for i, item := range cfg.Items {
 		switch item.Form {
 		case "select":
 			opts := make([]huh.Option[string], len(item.Options))
@@ -214,7 +208,7 @@ func loadForm(defaults FormOptions, authors []string) (*huh.Form, func() map[str
 		}
 	}
 
-	items := msgConfig.Items
+	items := cfg.Items
 	extractMsg := func() map[string]any {
 		m := make(map[string]any, len(items))
 		for i, item := range items {
@@ -255,5 +249,5 @@ func loadForm(defaults FormOptions, authors []string) (*huh.Form, func() map[str
 
 	extractOpts := func() FormOptions { return opts }
 
-	return huh.NewForm(groups...), extractMsg, extractOpts, msgConfig.Template, nil
+	return huh.NewForm(groups...), extractMsg, extractOpts, cfg.Template, nil
 }

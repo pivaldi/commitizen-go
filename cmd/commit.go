@@ -6,7 +6,9 @@ import (
 
 	"github.com/lintingzhen/commitizen-go/commit"
 	"github.com/lintingzhen/commitizen-go/git"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -42,6 +44,25 @@ func init() {
 		`override commit author as "Name <email>"`)
 }
 
+// loadMessageConfig merges the built-in default with any user override from .git-czrc.
+func loadMessageConfig() (commit.MessageConfig, error) {
+	cfg, err := commit.DefaultMessageConfig()
+	if err != nil {
+		return commit.MessageConfig{}, err
+	}
+
+	sub := viper.Sub("message")
+	if sub == nil {
+		log.Print("no message config in config file, using defaults")
+	} else {
+		if err := sub.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) { dc.ZeroFields = true }); err != nil {
+			log.Printf("ill message in config file, err=%v", err)
+		}
+	}
+
+	return cfg, nil
+}
+
 func commitRunE(_ *cobra.Command, _ []string) error {
 	if ok, err := git.IsCurrentDirectoryGitRepo(); err != nil || !ok {
 		if err != nil {
@@ -66,7 +87,12 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		authors = []string{}
 	}
 
-	msg, opts, err := commit.FillOutForm(defaults, authors)
+	msgCfg, err := loadMessageConfig()
+	if err != nil {
+		return fmt.Errorf("load message config: %w", err)
+	}
+
+	msg, opts, err := commit.FillOutForm(msgCfg, defaults, authors)
 	if err != nil {
 		return err
 	}
