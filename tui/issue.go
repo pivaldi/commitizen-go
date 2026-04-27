@@ -6,6 +6,27 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
+const (
+	IssueActionNameStart = "issueStart"
+	IssueActionNameList  = "issueList"
+	IssueActionNameClose = "issueClose"
+)
+
+// IssueActionSelect presents the list of available issue actions.
+func IssueActionSelect(action *string) *huh.Group {
+	return huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Issue action:").
+			Options(
+				huh.NewOption("Start\n"+descStyle.Render(
+					"Start working on an issue (create branch)"), IssueActionNameStart),
+				huh.NewOption("List\n"+descStyle.Render("List open issues"), IssueActionNameList),
+				huh.NewOption("Close\n"+descStyle.Render("Close an issue"), IssueActionNameClose),
+			).
+			Value(action),
+	)
+}
+
 func IssueInput(issueID, title, branchType *string, allowedBranchTypes []string) *huh.Group {
 	typeOpts := make([]huh.Option[string], 0, len(allowedBranchTypes))
 	for _, allowed := range allowedBranchTypes {
