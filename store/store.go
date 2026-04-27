@@ -40,9 +40,9 @@ type Branch struct {
 	MergedAt  *time.Time
 }
 
-// Open opens (or creates) the SQLite database at gitDir/git-cz.db and runs pending migrations.
-func Open(ctx context.Context, gitDir string) (*Store, error) {
-	path := filepath.Join(gitDir, "git-cz.db")
+// Open opens (or creates) the SQLite database at dir/git-cz.db and runs pending migrations.
+func Open(ctx context.Context, dir string) (*Store, error) {
+	path := filepath.Join(dir, "git-cz.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)

@@ -3,7 +3,6 @@ package commit
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -11,9 +10,7 @@ import (
 	"text/template"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
+	"github.com/lintingzhen/commitizen-go/tui"
 )
 
 // DefaultMessageConfig returns the parsed built-in message configuration.
@@ -35,12 +32,7 @@ func DefaultMessageConfig() (MessageConfig, error) {
 //
 // Returns the assembled commit message bytes and the (possibly user-modified) options.
 func FillOutForm(cfg MessageConfig, defaults FormOptions, authors []string) ([]byte, FormOptions, error) {
-	form, extractMsg, extractOpts, tmplText, err := loadForm(cfg, defaults, authors)
-	if err != nil {
-		log.Printf("loadForm failed, err=%v\n", err)
-
-		return nil, FormOptions{}, fmt.Errorf("load form: %w", err)
-	}
+	form, extractMsg, extractOpts, tmplText := loadForm(cfg, defaults, authors)
 
 	if err := form.Run(); err != nil {
 		return nil, FormOptions{}, fmt.Errorf("failed to run the form: %w", err)
@@ -145,109 +137,50 @@ func assembleMessage(buf *bytes.Buffer, tmplText string, answers map[string]any)
 	return nil
 }
 
-func titleCase(s string) string {
-	c := cases.Title(language.English, cases.NoLower)
-	return c.String(s)
-}
-
-func loadForm(cfg MessageConfig, defaults FormOptions, authors []string) (*huh.Form, func() map[string]any, func() FormOptions, string, error) {
+func loadForm(cfg MessageConfig,
+	defaults FormOptions,
+	authors []string) (*huh.Form, func() map[string]any, func() FormOptions, string) {
 	log.Printf("message tmpl: %s", cfg.Template)
 
 	// --- Group 1: commit message fields ---
-	values := make([]string, len(cfg.Items))
-	msgFields := make([]huh.Field, 0, len(cfg.Items))
-	requireValidator := func(s string) error {
-		if strings.TrimSpace(s) == "" {
-			return errors.New("required")
-		}
-
-		return nil
-	}
-
-	var style = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888")).
-		PaddingLeft(1)
-
+	fields := make([]tui.MessageField, len(cfg.Items))
 	for i, item := range cfg.Items {
-		switch item.Form {
-		case "select":
-			opts := make([]huh.Option[string], len(item.Options))
-			for j, opt := range item.Options {
-				name := titleCase(opt.Name)
-				opts[j] = huh.NewOption(name+"\n"+style.Render(opt.Desc), opt.Name)
-			}
-			sel := huh.NewSelect[string]().
-				Title(item.Desc).
-				Options(opts...).
-				Value(&values[i])
-			if item.Required {
-				sel = sel.Validate(requireValidator)
-			}
-			msgFields = append(msgFields, sel)
-		case "input":
-			inp := huh.NewInput().
-				Title(titleCase(item.Name) + ":").
-				Placeholder(item.Desc).
-				Value(&values[i])
-			if item.Required {
-				inp = inp.Validate(requireValidator)
-			}
-			msgFields = append(msgFields, inp)
-		case "multiline":
-			txt := huh.NewText().
-				Lines(2).
-				Title(strings.ToTitle(item.Name)).
-				Placeholder(item.Desc).
-				Value(&values[i])
-			if item.Required {
-				txt = txt.Validate(requireValidator)
-			}
-			msgFields = append(msgFields, txt)
-		default:
-			log.Printf("unknown form type %q for item %q, skipping", item.Form, item.Name)
+		opts := make([]tui.MessageFieldOption, len(item.Options))
+		for j, o := range item.Options {
+			opts[j] = tui.MessageFieldOption{Name: o.Name, Desc: o.Desc}
+		}
+
+		fields[i] = tui.MessageField{
+			Name:     item.Name,
+			Desc:     item.Desc,
+			Form:     item.Form,
+			Options:  opts,
+			Required: item.Required,
 		}
 	}
 
-	items := cfg.Items
 	extractMsg := func() map[string]any {
-		m := make(map[string]any, len(items))
-		for i, item := range items {
-			m[item.Name] = values[i]
+		m := make(map[string]any, len(fields))
+		for i := range fields {
+			m[fields[i].Name] = fields[i].Value
 		}
 
 		return m
 	}
 
-	groups := []*huh.Group{huh.NewGroup(msgFields...)}
+	groups := []*huh.Group{tui.CommitMessageGroup(fields)}
 
 	// --- Group 2: commit options (skipped when any flag was passed) ---
 	opts := defaults
 	if !defaults.anyOptionSet() {
-		authorOpts := make([]huh.Option[string], len(authors))
-		for i, a := range authors {
-			authorOpts[i] = huh.NewOption(a, a)
-		}
-		if len(authorOpts) == 0 {
-			authorOpts = []huh.Option[string]{huh.NewOption("(no authors found)", "")}
-		}
-
-		authorSel := huh.NewSelect[string]().
-			Title("Author:").
-			Options(authorOpts...).
-			Value(&opts.Author)
-
-		optFields := []huh.Field{
-			authorSel,
-			huh.NewConfirm().Title("Stage all tracked modified/deleted files? (--all)").Value(&opts.All),
-			huh.NewConfirm().Title("Amend last commit? (--amend)").Value(&opts.Amend),
-			huh.NewConfirm().Title("Skip hooks? (--no-verify)").Value(&opts.NoVerify),
-			huh.NewConfirm().Title("Add Signed-off-by trailer? (--signoff)").Value(&opts.Signoff),
-			huh.NewConfirm().Title("Allow empty commit? (--allow-empty)").Value(&opts.AllowEmpty),
-		}
-		groups = append(groups, huh.NewGroup(optFields...))
+		groups = append(groups, tui.CommitOptionsGroup(
+			authors,
+			&opts.Author,
+			&opts.All, &opts.Amend, &opts.NoVerify, &opts.Signoff, &opts.AllowEmpty,
+		))
 	}
 
 	extractOpts := func() FormOptions { return opts }
 
-	return huh.NewForm(groups...), extractMsg, extractOpts, cfg.Template, nil
+	return huh.NewForm(groups...), extractMsg, extractOpts, cfg.Template
 }
