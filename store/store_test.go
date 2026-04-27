@@ -7,7 +7,7 @@ import (
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(t.TempDir())
+	s, err := Open(t.Context(), t.TempDir())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -38,13 +38,13 @@ func TestMigration_idempotent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	s1, err := Open(dir)
+	s1, err := Open(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
 	_ = s1.Close()
 
-	s2, err := Open(dir)
+	s2, err := Open(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestInsertIssueWithBranch(t *testing.T) {
 		StatusID: 1,
 	}
 
-	if err := s.InsertIssueWithBranch(issue, branch); err != nil {
+	if err := s.InsertIssueWithBranch(t.Context(), &issue, &branch); err != nil {
 		t.Fatalf("InsertIssueWithBranch: %v", err)
 	}
 
@@ -96,18 +96,18 @@ func TestUpdateBranchStatus_merged(t *testing.T) {
 
 	issue := Issue{IDSlug: "ABC-1", Title: "Some issue", StatusID: 1}
 	branch := Branch{UUID: "aabbccdd", Name: "ABC-1@fix@some-issue@aabbccdd", Type: "fix", StatusID: 1}
-	if err := s.InsertIssueWithBranch(issue, branch); err != nil {
+	if err := s.InsertIssueWithBranch(t.Context(), &issue, &branch); err != nil {
 		t.Fatalf("InsertIssueWithBranch: %v", err)
 	}
 
 	// Updating to merged without merged_at must fail (trigger).
-	if err := s.UpdateBranchStatus("aabbccdd", 2, nil); err == nil {
+	if err := s.UpdateBranchStatus(t.Context(), "aabbccdd", 2, nil); err == nil {
 		t.Error("expected error when merged_at is nil for merged status, got nil")
 	}
 
 	// Updating to merged with merged_at must succeed.
 	now := time.Now()
-	if err := s.UpdateBranchStatus("aabbccdd", 2, &now); err != nil {
+	if err := s.UpdateBranchStatus(t.Context(), "aabbccdd", 2, &now); err != nil {
 		t.Errorf("UpdateBranchStatus merged: %v", err)
 	}
 

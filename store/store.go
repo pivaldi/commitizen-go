@@ -1,15 +1,16 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"sort"
+	"slices"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // Import for side-effect: registers sqlite driver
 )
 
 //go:embed migrations/*.sql
@@ -40,7 +41,7 @@ type Branch struct {
 }
 
 // Open opens (or creates) the SQLite database at gitDir/git-cz.db and runs pending migrations.
-func Open(gitDir string) (*Store, error) {
+func Open(ctx context.Context, gitDir string) (*Store, error) {
 	path := filepath.Join(gitDir, "git-cz.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -50,14 +51,14 @@ func Open(gitDir string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 
 	// Enable foreign keys.
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		_ = db.Close()
 
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
+	if err := s.migrate(ctx); err != nil {
 		_ = db.Close()
 
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -76,14 +77,14 @@ func (s *Store) Close() error {
 }
 
 // InsertIssueWithBranch inserts an issue and its linked branch in a single transaction.
-func (s *Store) InsertIssueWithBranch(issue Issue, branch Branch) error {
-	tx, err := s.db.Begin()
+func (s *Store) InsertIssueWithBranch(ctx context.Context, issue *Issue, branch *Branch) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.Exec(
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO issues (id_slug, title, status_id) VALUES (?, ?, ?)`,
 		issue.IDSlug, issue.Title, issue.StatusID,
 	)
@@ -96,7 +97,7 @@ func (s *Store) InsertIssueWithBranch(issue Issue, branch Branch) error {
 		return fmt.Errorf("last insert id: %w", err)
 	}
 
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO branches (uuid, name, issue_id, type, status_id) VALUES (?, ?, ?, ?, ?)`,
 		branch.UUID, branch.Name, issueID, branch.Type, branch.StatusID,
 	)
@@ -112,8 +113,8 @@ func (s *Store) InsertIssueWithBranch(issue Issue, branch Branch) error {
 }
 
 // UpdateBranchStatus updates a branch's status. mergedAt must be non-nil when statusID == 2 (merged).
-func (s *Store) UpdateBranchStatus(uuid string, statusID int64, mergedAt *time.Time) error {
-	res, err := s.db.Exec(
+func (s *Store) UpdateBranchStatus(ctx context.Context, uuid string, statusID int64, mergedAt *time.Time) error {
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE branches SET status_id = ?, merged_at = ? WHERE uuid = ?`,
 		statusID, mergedAt, uuid,
 	)
@@ -134,8 +135,8 @@ func (s *Store) UpdateBranchStatus(uuid string, statusID int64, mergedAt *time.T
 }
 
 // UpdateIssueStatus updates an issue's status.
-func (s *Store) UpdateIssueStatus(issueID int64, statusID int64) error {
-	res, err := s.db.Exec(
+func (s *Store) UpdateIssueStatus(ctx context.Context, issueID, statusID int64) error {
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE issues SET status_id = ? WHERE id = ?`,
 		statusID, issueID,
 	)
@@ -155,9 +156,9 @@ func (s *Store) UpdateIssueStatus(issueID int64, statusID int64) error {
 	return nil
 }
 
-func (s *Store) migrate() error {
+func (s *Store) migrate(ctx context.Context) error {
 	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("read user_version: %w", err)
 	}
 
@@ -172,7 +173,8 @@ func (s *Store) migrate() error {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Strings(names)
+
+	slices.Sort(names)
 
 	for i, name := range names {
 		if i < version {
@@ -184,12 +186,12 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 
-		tx, err := s.db.Begin()
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration tx %s: %w", name, err)
 		}
 
-		if _, err := tx.Exec(string(content)); err != nil {
+		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
 			_ = tx.Rollback()
 
 			return fmt.Errorf("exec migration %s: %w", name, err)
@@ -201,7 +203,7 @@ func (s *Store) migrate() error {
 
 		// PRAGMA user_version does not support parameter binding; i is compile-time-bounded.
 		// Executed after Commit because PRAGMA user_version is not transactional in SQLite.
-		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
 			return fmt.Errorf("bump user_version: %w", err)
 		}
 	}

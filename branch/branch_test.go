@@ -33,8 +33,8 @@ func TestSlug(t *testing.T) {
 func TestShortUUID(t *testing.T) {
 	t.Parallel()
 
-	a := ShortUUID()
-	b := ShortUUID()
+	a := shortUUID()
+	b := shortUUID()
 
 	if len(a) != 8 {
 		t.Errorf("ShortUUID len = %d, want 8", len(a))
@@ -51,10 +51,12 @@ func TestName(t *testing.T) {
 	t.Parallel()
 
 	// Name calls ShortUUID internally, so we only check structure.
-	n, err := Name("ABC-42", "feat", "Add OAuth Login")
+	b, err := New("ABC-42", "feat", "Add OAuth Login")
 	if err != nil {
 		t.Fatalf("Name error: %v", err)
 	}
+
+	n := b.Name()
 	parts := strings.Split(n, "@")
 	if len(parts) != 4 {
 		t.Fatalf("Name produced %d parts, want 4: %q", len(parts), n)
@@ -79,30 +81,39 @@ func TestName(t *testing.T) {
 func TestName_emptySlug(t *testing.T) {
 	t.Parallel()
 
-	_, err := Name("ABC-42", "feat", "!!!")
+	_, err := New("ABC-42", "feat", "!!!")
 	if err == nil {
-		t.Error("Name with all-punctuation title: expected error, got nil")
+		t.Error("branch with all-punctuation title: expected error, got nil")
+	}
+}
+
+func TestName_emptyType(t *testing.T) {
+	t.Parallel()
+
+	_, err := New("ABC-42", "", "branch title")
+	if err == nil {
+		t.Error("branch with empty type: expected error, got nil")
 	}
 }
 
 func TestParse(t *testing.T) {
 	t.Parallel()
 
-	issueID, branchType, title, uuid, err := Parse("ABC-42@feat@add-oauth-login@550e8400")
+	b, err := Parse("ABC-42@feat@add-oauth-login@550e8400")
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	if issueID != "ABC-42" {
-		t.Errorf("issueID = %q, want %q", issueID, "ABC-42")
+	if b.issueID != "ABC-42" {
+		t.Errorf("issueID = %q, want %q", b.issueID, "ABC-42")
 	}
-	if branchType != "feat" {
-		t.Errorf("branchType = %q, want %q", branchType, "feat")
+	if b.btype != "feat" {
+		t.Errorf("branchType = %q, want %q", b.btype, "feat")
 	}
-	if title != "add-oauth-login" {
-		t.Errorf("title = %q, want %q", title, "add-oauth-login")
+	if b.title != "add-oauth-login" {
+		t.Errorf("title = %q, want %q", b.title, "add-oauth-login")
 	}
-	if uuid != "550e8400" {
-		t.Errorf("uuid = %q, want %q", uuid, "550e8400")
+	if b.id != "550e8400" {
+		t.Errorf("uuid = %q, want %q", b.id, "550e8400")
 	}
 }
 
@@ -117,7 +128,7 @@ func TestParse_invalid(t *testing.T) {
 		"one@two@three@four@five",
 	}
 	for _, c := range cases {
-		if _, _, _, _, err := Parse(c); err == nil {
+		if _, err := Parse(c); err == nil {
 			t.Errorf("Parse(%q) expected error, got nil", c)
 		}
 	}

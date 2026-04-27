@@ -1,8 +1,9 @@
 package git
 
 import (
+	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 
 // CommitOptions configures Client.Commit.
 type CommitOptions struct {
-	All  bool
+	All   bool
 	Amend bool
 	// NoVerify — go-git v6 does not execute hooks; reserved for a future subprocess fallback.
 	NoVerify   bool
@@ -77,7 +78,7 @@ func (c *Client) Authors() ([]string, error) {
 		return nil, fmt.Errorf("walk commits: %w", err)
 	}
 
-	sort.Strings(list)
+	slices.Sort(list)
 
 	cfg, err := c.repo.Config()
 	if err == nil && cfg.User.Name != "" {
@@ -170,7 +171,7 @@ func (c *Client) DefaultBaseBranch() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("could not detect default base branch")
+	return "", errors.New("could not detect default base branch")
 }
 
 // CreateBranch creates a new branch from baseBranch and checks it out.

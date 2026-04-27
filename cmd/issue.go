@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -8,8 +9,10 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/lintingzhen/commitizen-go/branch"
+	"github.com/lintingzhen/commitizen-go/commit"
 	"github.com/lintingzhen/commitizen-go/git"
 	"github.com/lintingzhen/commitizen-go/store"
+	"github.com/lintingzhen/commitizen-go/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -24,7 +27,7 @@ checked out from the default base branch. Branch state is saved to .git/git-cz.d
 	}
 }
 
-func issueRunE(_ *cobra.Command, _ []string) error {
+func issueRunE(cmd *cobra.Command, _ []string) error {
 	client, err := git.NewClient()
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
@@ -45,62 +48,28 @@ func issueRunE(_ *cobra.Command, _ []string) error {
 
 	var issueID, title, branchType string
 
-	typeOpts := make([]huh.Option[string], 0)
-	if len(msgCfg.Items) > 0 {
-		for _, opt := range msgCfg.Items[0].Options {
-			typeOpts = append(typeOpts, huh.NewOption(opt.Name, opt.Name))
-		}
-	}
-	if len(typeOpts) == 0 {
+	allowedBranchTypes := getAllowedBranchType(msgCfg.Items)
+	if len(allowedBranchTypes) == 0 {
 		return errors.New("message config: no type options found in first item")
 	}
 
-	group1 := huh.NewGroup(
-		huh.NewInput().
-			Title("Issue ID:").
-			Placeholder("ABC-42").
-			Validate(func(s string) error {
-				if s == "" {
-					return errors.New("required")
-				}
-
-				return nil
-			}).
-			Value(&issueID),
-		huh.NewInput().
-			Title("Title:").
-			Placeholder("Short description of the issue").
-			Validate(func(s string) error {
-				if s == "" {
-					return errors.New("required")
-				}
-
-				return nil
-			}).
-			Value(&title),
-		huh.NewSelect[string]().
-			Title("Type:").
-			Options(typeOpts...).
-			Value(&branchType),
-	)
+	group1 := tui.IssueInput(&issueID, &title, &branchType, allowedBranchTypes)
 
 	if err := huh.NewForm(group1).Run(); err != nil {
 		return fmt.Errorf("issue form: %w", err)
 	}
 
-	branchName, err := branch.Name(issueID, branchType, title)
+	b, err := branch.New(issueID, branchType, title)
 	if err != nil {
 		return fmt.Errorf("assemble branch name: %w", err)
 	}
 
+	branchName := b.Name()
+
 	var confirmed bool
 	confirmTitle := fmt.Sprintf("Create branch %q based on %q?", branchName, base)
 
-	group2 := huh.NewGroup(
-		huh.NewConfirm().
-			Title(confirmTitle).
-			Value(&confirmed),
-	)
+	group2 := tui.IssueConfirm(confirmTitle, &confirmed)
 
 	if err := huh.NewForm(group2).Run(); err != nil {
 		return fmt.Errorf("confirm form: %w", err)
@@ -116,27 +85,42 @@ func issueRunE(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("create branch: %w", err)
 	}
 
-	root, err := client.WorkingTreeRoot()
-	if err != nil {
-		log.Printf("branch %q created; could not open store: %v", branchName, err)
-	} else {
-		s, err := store.Open(filepath.Join(root, ".git"))
-		if err != nil {
-			log.Printf("open store failed: %v", err)
-		} else {
-			defer func() { _ = s.Close() }()
-
-			_, _, _, uuid, _ := branch.Parse(branchName)
-			if err := s.InsertIssueWithBranch(
-				store.Issue{IDSlug: issueID, Title: title, StatusID: 1},
-				store.Branch{UUID: uuid, Name: branchName, Type: branchType, StatusID: 1},
-			); err != nil {
-				log.Printf("store insert failed: %v", err)
-			}
-		}
-	}
+	persiste(cmd.Context(), client, b)
 
 	fmt.Printf("Switched to new branch %q (based on %q)\n", branchName, base)
 
 	return nil
+}
+
+func getAllowedBranchType(items []*commit.FormItem) []string {
+	allowedBranchTypes := make([]string, 0)
+	if len(items) > 0 {
+		for _, opt := range items[0].Options {
+			allowedBranchTypes = append(allowedBranchTypes, opt.Name)
+		}
+	}
+
+	return allowedBranchTypes
+}
+
+func persiste(ctx context.Context, client *git.Client, b *branch.Branch) {
+	root, err := client.WorkingTreeRoot()
+	if err != nil {
+		log.Printf("branch %q created; could not open store: %v", b.Name(), err)
+		return
+	}
+
+	s, err := store.Open(ctx, filepath.Join(root, ".git"))
+	if err != nil {
+		log.Printf("open store failed: %v", err)
+	} else {
+		defer func() { _ = s.Close() }()
+
+		if err := s.InsertIssueWithBranch(ctx,
+			&store.Issue{IDSlug: b.IssueID(), Title: b.Title(), StatusID: 1},
+			&store.Branch{UUID: b.ID(), Name: b.Name(), Type: b.Type(), StatusID: 1},
+		); err != nil {
+			log.Printf("store insert failed: %v", err)
+		}
+	}
 }

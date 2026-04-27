@@ -832,11 +832,6 @@ linters:
           severity: warning
           disabled: false
           exclude: [""]
-        # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#use-slices-sort
-        - name: use-slices-sort
-          severity: warning
-          disabled: false
-          exclude: [""]
         # https://github.com/mgechev/revive/blob/HEAD/RULES_DESCRIPTIONS.md#use-waitgroup-go
         - name: use-waitgroup-go
           severity: warning
