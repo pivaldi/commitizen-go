@@ -6,13 +6,8 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
-type BranchType struct {
-	Value   string
-	Allowed []string
-}
-
 func IssueInput(issueID, title, branchType *string, allowedBranchTypes []string) *huh.Group {
-	typeOpts := make([]huh.Option[string], 0)
+	typeOpts := make([]huh.Option[string], 0, len(allowedBranchTypes))
 	for _, allowed := range allowedBranchTypes {
 		typeOpts = append(typeOpts, huh.NewOption(allowed, allowed))
 	}

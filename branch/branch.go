@@ -23,13 +23,13 @@ type Branch struct {
 }
 
 func New(issueID, branchType, title string) (*Branch, error) {
-	slug := Slug(title)
-	if slug == "" {
-		return nil, fmt.Errorf("branch.Name: title %q produces an empty slug", title)
+	if branchType == "" {
+		return nil, errors.New("branch type is empty")
 	}
 
-	if branchType == "" {
-		return nil, errors.New("branche type can not be empty")
+	slug := Slug(title)
+	if slug == "" {
+		return nil, fmt.Errorf("branch.New: title %q produces an empty slug", title)
 	}
 
 	return &Branch{
@@ -85,12 +85,16 @@ func Parse(name string) (*Branch, error) {
 		return nil, fmt.Errorf("branch name %q: expected 4 parts, got %d", name, len(parts))
 	}
 
-	b, err := New(parts[0], parts[1], parts[2])
-	if err != nil {
-		return nil, err
+	return fromParts(parts[0], parts[1], parts[2], parts[3]), nil
+}
+
+// fromParts reconstructs a Branch from already-validated components.
+// Unlike New, it does not re-slug the title or generate a new UUID.
+func fromParts(issueID, branchType, title, id string) *Branch {
+	return &Branch{
+		issueID: issueID,
+		btype:   branchType,
+		title:   title,
+		id:      id,
 	}
-
-	b.id = parts[3]
-
-	return b, nil
 }

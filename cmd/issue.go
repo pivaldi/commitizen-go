@@ -85,7 +85,7 @@ func issueRunE(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create branch: %w", err)
 	}
 
-	persiste(cmd.Context(), client, b)
+	persist(cmd.Context(), client, b, title)
 
 	fmt.Printf("Switched to new branch %q (based on %q)\n", branchName, base)
 
@@ -93,20 +93,23 @@ func issueRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func getAllowedBranchType(items []*commit.FormItem) []string {
-	allowedBranchTypes := make([]string, 0)
-	if len(items) > 0 {
-		for _, opt := range items[0].Options {
-			allowedBranchTypes = append(allowedBranchTypes, opt.Name)
-		}
+	if len(items) == 0 {
+		return nil
+	}
+
+	allowedBranchTypes := make([]string, 0, len(items[0].Options))
+	for _, opt := range items[0].Options {
+		allowedBranchTypes = append(allowedBranchTypes, opt.Name)
 	}
 
 	return allowedBranchTypes
 }
 
-func persiste(ctx context.Context, client *git.Client, b *branch.Branch) {
+func persist(ctx context.Context, client *git.Client, b *branch.Branch, rawTitle string) {
 	root, err := client.WorkingTreeRoot()
 	if err != nil {
 		log.Printf("branch %q created; could not open store: %v", b.Name(), err)
+
 		return
 	}
 
@@ -117,7 +120,7 @@ func persiste(ctx context.Context, client *git.Client, b *branch.Branch) {
 		defer func() { _ = s.Close() }()
 
 		if err := s.InsertIssueWithBranch(ctx,
-			&store.Issue{IDSlug: b.IssueID(), Title: b.Title(), StatusID: 1},
+			&store.Issue{IDSlug: b.IssueID(), Title: rawTitle, StatusID: 1},
 			&store.Branch{UUID: b.ID(), Name: b.Name(), Type: b.Type(), StatusID: 1},
 		); err != nil {
 			log.Printf("store insert failed: %v", err)

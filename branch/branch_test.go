@@ -7,6 +7,8 @@ import (
 )
 
 func TestSlug(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input string
 		want  string
