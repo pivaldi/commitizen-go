@@ -12,6 +12,17 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
+// CommitSummary holds display information about a newly created commit.
+type CommitSummary struct {
+	ShortHash string
+	Branch    string
+	IsRoot    bool
+	Subject   string
+	Files     int
+	Additions int
+	Deletions int
+}
+
 // CommitOptions configures Client.Commit.
 type CommitOptions struct {
 	All   bool
@@ -96,10 +107,11 @@ func (c *Client) Authors() ([]string, error) {
 }
 
 // Commit records a commit with msg and the given options.
-func (c *Client) Commit(msg []byte, opts CommitOptions) error {
+// It returns a CommitSummary suitable for printing to the user.
+func (c *Client) Commit(msg []byte, opts CommitOptions) (CommitSummary, error) {
 	wt, err := c.repo.Worktree()
 	if err != nil {
-		return fmt.Errorf("get worktree: %w", err)
+		return CommitSummary{}, fmt.Errorf("get worktree: %w", err)
 	}
 
 	finalMsg := string(msg)
@@ -132,11 +144,53 @@ func (c *Client) Commit(msg []byte, opts CommitOptions) error {
 		}
 	}
 
-	if _, err = wt.Commit(finalMsg, commitOpts); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	hash, err := wt.Commit(finalMsg, commitOpts)
+	if err != nil {
+		return CommitSummary{}, fmt.Errorf("commit: %w", err)
 	}
 
-	return nil
+	summary, err := c.buildSummary(hash, finalMsg)
+	if err != nil {
+		return CommitSummary{}, err
+	}
+
+	return summary, nil
+}
+
+func (c *Client) buildSummary(hash plumbing.Hash, msg string) (CommitSummary, error) {
+	commit, err := c.repo.CommitObject(hash)
+	if err != nil {
+		return CommitSummary{}, fmt.Errorf("read commit: %w", err)
+	}
+
+	stats, err := commit.Stats()
+	if err != nil {
+		return CommitSummary{}, fmt.Errorf("commit stats: %w", err)
+	}
+
+	head, err := c.repo.Head()
+	if err != nil {
+		return CommitSummary{}, fmt.Errorf("read HEAD: %w", err)
+	}
+
+	subject := strings.TrimSpace(strings.SplitN(msg, "\n", 2)[0])
+
+	var files, add, del int
+	for _, f := range stats {
+		files++
+		add += f.Addition
+		del += f.Deletion
+	}
+
+	return CommitSummary{
+		ShortHash: hash.String()[:7],
+		Branch:    head.Name().Short(),
+		IsRoot:    len(commit.ParentHashes) == 0,
+		Subject:   subject,
+		Files:     files,
+		Additions: add,
+		Deletions: del,
+	}, nil
 }
 
 // parseAuthor splits "Name <email>" into name and email parts.

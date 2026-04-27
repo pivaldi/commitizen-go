@@ -89,7 +89,7 @@ func TestCommit_basic(t *testing.T) {
 	stageNewFile(t, wt, "file.txt", "hello")
 	client := &Client{repo: repo}
 
-	if err := client.Commit([]byte("feat: basic commit"), CommitOptions{}); err != nil {
+	if _, err := client.Commit([]byte("feat: basic commit"), CommitOptions{}); err != nil {
 		t.Fatalf("Commit error: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestCommit_all_stagesTrackedOnly(t *testing.T) {
 
 	client := &Client{repo: repo}
 
-	if err := client.Commit([]byte("chore: all flag"), CommitOptions{All: true}); err != nil {
+	if _, err := client.Commit([]byte("chore: all flag"), CommitOptions{All: true}); err != nil {
 		t.Fatalf("Commit error: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestCommit_signoff(t *testing.T) {
 	stageNewFile(t, wt, "file.txt", "x")
 	client := &Client{repo: repo}
 
-	err := client.Commit([]byte("docs: readme"), CommitOptions{
+	_, err := client.Commit([]byte("docs: readme"), CommitOptions{
 		Signoff: true,
 		Author:  "Alice Dev <alice@example.com>",
 	})
@@ -186,7 +186,7 @@ func TestCommit_author(t *testing.T) {
 	stageNewFile(t, wt, "file.txt", "x")
 	client := &Client{repo: repo}
 
-	err := client.Commit([]byte("fix: author override"), CommitOptions{
+	_, err := client.Commit([]byte("fix: author override"), CommitOptions{
 		Author: "Bob Builder <bob@example.com>",
 	})
 	if err != nil {
@@ -216,7 +216,7 @@ func TestCommit_amend(t *testing.T) {
 	client := &Client{repo: repo}
 
 	// Second commit — the one we will amend.
-	if err := client.Commit([]byte("feat: to be amended"), CommitOptions{}); err != nil {
+	if _, err := client.Commit([]byte("feat: to be amended"), CommitOptions{}); err != nil {
 		t.Fatalf("Commit error: %v", err)
 	}
 
@@ -228,7 +228,7 @@ func TestCommit_amend(t *testing.T) {
 	_ = iter.ForEach(func(_ *object.Commit) error { countBefore++; return nil })
 
 	// Amend: replace the tip commit message.
-	if err := client.Commit([]byte("feat: amended message"), CommitOptions{Amend: true}); err != nil {
+	if _, err := client.Commit([]byte("feat: amended message"), CommitOptions{Amend: true}); err != nil {
 		t.Fatalf("amend error: %v", err)
 	}
 
@@ -325,6 +325,74 @@ func TestDefaultBaseBranch_main(t *testing.T) {
 	}
 	if base != "main" {
 		t.Errorf("DefaultBaseBranch = %q, want %q", base, "main")
+	}
+}
+
+func TestCommit_summary(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+	wt, _ := repo.Worktree()
+	stageNewFile(t, wt, "feature.go", "package main\n\nfunc New() {}\n")
+	client := &Client{repo: repo}
+
+	summary, err := client.Commit([]byte("feat: add feature\n\nsome body"), CommitOptions{})
+	if err != nil {
+		t.Fatalf("Commit error: %v", err)
+	}
+
+	if len(summary.ShortHash) != 7 {
+		t.Errorf("ShortHash len = %d, want 7", len(summary.ShortHash))
+	}
+	if summary.Branch != "master" {
+		t.Errorf("Branch = %q, want %q", summary.Branch, "master")
+	}
+	if summary.IsRoot {
+		t.Error("IsRoot = true, want false")
+	}
+	if summary.Subject != "feat: add feature" {
+		t.Errorf("Subject = %q, want %q", summary.Subject, "feat: add feature")
+	}
+	if summary.Files != 1 {
+		t.Errorf("Files = %d, want 1", summary.Files)
+	}
+	if summary.Additions == 0 {
+		t.Error("Additions = 0, want > 0")
+	}
+	if summary.Deletions != 0 {
+		t.Errorf("Deletions = %d, want 0", summary.Deletions)
+	}
+}
+
+func TestCommit_summary_rootCommit(t *testing.T) {
+	t.Parallel()
+
+	repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(memfs.New()))
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	cfg, _ := repo.Config()
+	cfg.User.Name = "Test User"
+	cfg.User.Email = "test@example.com"
+	_ = repo.SetConfig(cfg)
+
+	wt, _ := repo.Worktree()
+	stageNewFile(t, wt, "init.txt", "hello")
+
+	client := &Client{repo: repo}
+	summary, err := client.Commit([]byte("chore: initial commit"), CommitOptions{})
+	if err != nil {
+		t.Fatalf("Commit error: %v", err)
+	}
+
+	if !summary.IsRoot {
+		t.Error("IsRoot = false, want true")
+	}
+	if summary.Files != 1 {
+		t.Errorf("Files = %d, want 1", summary.Files)
+	}
+	if summary.Additions == 0 {
+		t.Error("Additions = 0, want > 0 for root commit")
 	}
 }
 
