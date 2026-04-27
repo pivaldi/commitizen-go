@@ -9,13 +9,13 @@ func TestAssembleMessage(t *testing.T) {
 	tests := []struct {
 		name    string
 		tmpl    string
-		answers map[string]interface{}
+		answers map[string]any
 		want    string
 	}{
 		{
 			name: "type with scope and subject",
 			tmpl: "{{.type}}{{with .scope}}({{.}}){{end}}: {{.subject}}",
-			answers: map[string]interface{}{
+			answers: map[string]any{
 				"type": "feat", "scope": "auth", "subject": "add login",
 			},
 			want: "feat(auth): add login",
@@ -23,7 +23,7 @@ func TestAssembleMessage(t *testing.T) {
 		{
 			name: "empty scope omitted",
 			tmpl: "{{.type}}{{with .scope}}({{.}}){{end}}: {{.subject}}",
-			answers: map[string]interface{}{
+			answers: map[string]any{
 				"type": "fix", "scope": "", "subject": "fix nil panic",
 			},
 			want: "fix: fix nil panic",
@@ -31,7 +31,7 @@ func TestAssembleMessage(t *testing.T) {
 		{
 			name: "trims leading and trailing whitespace from subject",
 			tmpl: "{{.type}}: {{.subject}}",
-			answers: map[string]interface{}{
+			answers: map[string]any{
 				"type": "docs", "subject": "  update readme  ",
 			},
 			want: "docs: update readme",
@@ -39,7 +39,7 @@ func TestAssembleMessage(t *testing.T) {
 		{
 			name: "full conventional commit with body and footer",
 			tmpl: "{{.type}}: {{.subject}}{{with .body}}\n\n{{.}}{{end}}{{with .footer}}\n\n{{.}}{{end}}",
-			answers: map[string]interface{}{
+			answers: map[string]any{
 				"type":    "feat",
 				"subject": "add oauth",
 				"body":    "implements google oauth flow",
@@ -50,7 +50,7 @@ func TestAssembleMessage(t *testing.T) {
 		{
 			name: "empty body and footer omitted",
 			tmpl: "{{.type}}: {{.subject}}{{with .body}}\n\n{{.}}{{end}}{{with .footer}}\n\n{{.}}{{end}}",
-			answers: map[string]interface{}{
+			answers: map[string]any{
 				"type": "chore", "subject": "update deps", "body": "", "footer": "",
 			},
 			want: "chore: update deps",
@@ -133,26 +133,6 @@ func TestBuildAuthorList_currentUserNotInHistory(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Errorf("len: got %d, want 3 — list: %v", len(got), got)
-	}
-}
-
-func TestFormOptions_anyOptionSet(t *testing.T) {
-	cases := []struct {
-		opts FormOptions
-		want bool
-	}{
-		{FormOptions{}, false},
-		{FormOptions{All: true}, true},
-		{FormOptions{Amend: true}, true},
-		{FormOptions{NoVerify: true}, true},
-		{FormOptions{Signoff: true}, true},
-		{FormOptions{AllowEmpty: true}, true},
-		{FormOptions{Author: "Alice <a@b.com>"}, true},
-	}
-	for _, tc := range cases {
-		if got := tc.opts.anyOptionSet(); got != tc.want {
-			t.Errorf("%+v: anyOptionSet()=%v, want %v", tc.opts, got, tc.want)
-		}
 	}
 }
 

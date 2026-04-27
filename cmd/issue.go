@@ -9,7 +9,6 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/lintingzhen/commitizen-go/branch"
-	"github.com/lintingzhen/commitizen-go/commit"
 	"github.com/lintingzhen/commitizen-go/git"
 	"github.com/lintingzhen/commitizen-go/store"
 	"github.com/lintingzhen/commitizen-go/tui"
@@ -92,7 +91,7 @@ func issueRunE(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func getAllowedBranchType(items []*commit.FormItem) []string {
+func getAllowedBranchType(items []tui.CommitItem) []string {
 	if len(items) == 0 {
 		return nil
 	}

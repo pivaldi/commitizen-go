@@ -11,30 +11,54 @@ import (
 	"golang.org/x/text/language"
 )
 
-// MessageField describes one field in the commit message form.
-// Value is written by the form after the user submits.
-type MessageField struct {
-	Name     string
-	Desc     string
-	Form     string // "select", "input", or "multiline"
-	Options  []MessageFieldOption
-	Required bool
-	Value    string
+// CommitItemOption is a single selectable option within a CommitItem select field.
+type CommitItemOption struct {
+	Name string // value stored in the commit message template
+	Desc string // label shown to the user in the TUI
 }
 
-// MessageFieldOption is a single selectable option within a select field.
-type MessageFieldOption struct {
-	Name string
-	Desc string
+// CommitItem describes one field in the commit message form.
+// Value is written by the form after the user submits.
+type CommitItem struct {
+	Name     string             // key used in the message template
+	Desc     string             // prompt text shown to the user
+	Form     string             // field type: "select", "input", or "multiline"
+	Options  []CommitItemOption // options for "select" fields
+	Required bool               // whether the field must be non-empty
+	Value    string             // written by the form after submission
+}
+
+// CommitMessageConfig holds the ordered list of form fields and the Go template used to assemble the commit message.
+type CommitMessageConfig struct {
+	Items    []CommitItem
+	Template string
+}
+
+// CommitOption holds commit option values for the commit options group of the TUI.
+// Used both as flag-derived defaults (input) and as user selections (output).
+type CommitOption struct {
+	Authors    []string
+	Author     string
+	All        bool
+	Amend      bool
+	NoVerify   bool
+	Signoff    bool
+	AllowEmpty bool
+}
+
+// AnyOptionSet reports true if any commit-option flag was passed.
+// When true, the CommitOptionsGroup of the TUI should be skipped.
+func (o CommitOption) AnyOptionSet() bool {
+	return o.All || o.Amend || o.NoVerify || o.Signoff || o.AllowEmpty || o.Author != ""
 }
 
 var descStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#888888")).
 	PaddingLeft(1)
 
-// CommitMessageGroup builds the first commit form group from the given fields.
-// Each field's Value is written by the form after the user submits.
-func CommitMessageGroup(fields []MessageField) *huh.Group {
+// CommitMessageGroup builds the first commit form group from the given items.
+// Each item's Value is written by the form after the user submits.
+func CommitMessageGroup(items []CommitItem) *huh.Group {
 	requireValidator := func(s string) error {
 		if strings.TrimSpace(s) == "" {
 			return errors.New("required")
@@ -43,9 +67,9 @@ func CommitMessageGroup(fields []MessageField) *huh.Group {
 		return nil
 	}
 
-	msgFields := make([]huh.Field, 0, len(fields))
-	for i := range fields {
-		f := &fields[i]
+	msgFields := make([]huh.Field, 0, len(items))
+	for i := range items {
+		f := &items[i]
 		switch f.Form {
 		case "select":
 			opts := make([]huh.Option[string], len(f.Options))
@@ -89,14 +113,10 @@ func CommitMessageGroup(fields []MessageField) *huh.Group {
 }
 
 // CommitOptionsGroup builds the second commit form group (author + commit flags).
-// All pointer arguments are written directly by the form fields.
-func CommitOptionsGroup(
-	authors []string,
-	author *string,
-	all, amend, noVerify, signoff, allowEmpty *bool,
-) *huh.Group {
-	authorOpts := make([]huh.Option[string], 0, len(authors))
-	for _, a := range authors {
+// opt is written directly by the form fields.
+func CommitOptionsGroup(opt *CommitOption) *huh.Group {
+	authorOpts := make([]huh.Option[string], 0, len(opt.Authors))
+	for _, a := range opt.Authors {
 		authorOpts = append(authorOpts, huh.NewOption(a, a))
 	}
 	if len(authorOpts) == 0 {
@@ -107,12 +127,12 @@ func CommitOptionsGroup(
 		huh.NewSelect[string]().
 			Title("Author:").
 			Options(authorOpts...).
-			Value(author),
-		huh.NewConfirm().Title("Stage all tracked modified/deleted files? (--all)").Value(all),
-		huh.NewConfirm().Title("Amend last commit? (--amend)").Value(amend),
-		huh.NewConfirm().Title("Skip hooks? (--no-verify)").Value(noVerify),
-		huh.NewConfirm().Title("Add Signed-off-by trailer? (--signoff)").Value(signoff),
-		huh.NewConfirm().Title("Allow empty commit? (--allow-empty)").Value(allowEmpty),
+			Value(&opt.Author),
+		huh.NewConfirm().Title("Stage all tracked modified/deleted files? (--all)").Value(&opt.All),
+		huh.NewConfirm().Title("Amend last commit? (--amend)").Value(&opt.Amend),
+		huh.NewConfirm().Title("Skip hooks? (--no-verify)").Value(&opt.NoVerify),
+		huh.NewConfirm().Title("Add Signed-off-by trailer? (--signoff)").Value(&opt.Signoff),
+		huh.NewConfirm().Title("Allow empty commit? (--allow-empty)").Value(&opt.AllowEmpty),
 	)
 }
 

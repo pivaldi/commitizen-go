@@ -6,6 +6,7 @@ import (
 
 	"github.com/lintingzhen/commitizen-go/commit"
 	"github.com/lintingzhen/commitizen-go/git"
+	"github.com/lintingzhen/commitizen-go/tui"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -47,10 +48,10 @@ func getCommitCmd() *cobra.Command {
 }
 
 // loadMessageConfig merges the built-in default with any user override from .git-czrc.
-func loadMessageConfig() (commit.MessageConfig, error) {
+func loadMessageConfig() (tui.CommitMessageConfig, error) {
 	cfg, err := commit.DefaultMessageConfig()
 	if err != nil {
-		return commit.MessageConfig{}, fmt.Errorf("failed to load config: %w", err)
+		return tui.CommitMessageConfig{}, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	sub := viper.Sub("message")
@@ -71,7 +72,14 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("not a git repository: %w", err)
 	}
 
-	defaults := commit.FormOptions{
+	authors, err := client.Authors()
+	if err != nil {
+		log.Printf("could not load author list: %v", err)
+		authors = []string{}
+	}
+
+	defaults := tui.CommitOption{
+		Authors:    authors,
 		All:        commitAll,
 		Amend:      commitAmend,
 		NoVerify:   commitNoVerify,
@@ -80,18 +88,12 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		Author:     commitAuthor,
 	}
 
-	authors, err := client.Authors()
-	if err != nil {
-		log.Printf("could not load author list: %v", err)
-		authors = []string{}
-	}
-
 	msgCfg, err := loadMessageConfig()
 	if err != nil {
 		return fmt.Errorf("load message config: %w", err)
 	}
 
-	msg, opts, err := commit.FillOutForm(msgCfg, defaults, authors)
+	msg, opts, err := commit.FillOutForm(msgCfg, defaults)
 	if err != nil {
 		return fmt.Errorf("failed to fill form: %w", err)
 	}
