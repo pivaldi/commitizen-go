@@ -269,10 +269,9 @@ func getBranchNewCmd() *cobra.Command {
 	}
 }
 
-// branchNewRunE delegates to issueStartRunE (manual input form).
-// Step 2b: add toggle to tracker-picker.
-func branchNewRunE(cmd *cobra.Command, args []string) error {
-	return issueStartRunE(cmd, args)
+// branchNewRunE delegates to runIssueStart with manual-first (tracker toggle defaults to NO).
+func branchNewRunE(cmd *cobra.Command, _ []string) error {
+	return runIssueStart(cmd.Context(), issueStartFlags{trackerFirst: false})
 }
 
 type branchPruneFlags struct {

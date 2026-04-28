@@ -23,10 +23,11 @@ type Store struct {
 
 // Issue represents a tracked issue record.
 type Issue struct {
-	ID       int64
-	IDSlug   string // tracker string ID: "ABC-42", "42", …
-	Title    string
-	StatusID int64
+	ID          int64
+	IDSlug      string  // tracker string ID: "ABC-42", "42", …
+	Title       string
+	StatusID    int64
+	TrackerType *string // nil = manual entry; non-nil = tracker type (e.g. "redmine")
 }
 
 // Branch represents a tracked branch record.
@@ -105,8 +106,8 @@ func (s *Store) InsertIssueWithBranch(ctx context.Context, issue *Issue, branch 
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO issues (id_slug, title, status_id) VALUES (?, ?, ?)`,
-		issue.IDSlug, issue.Title, issue.StatusID,
+		`INSERT INTO issues (id_slug, title, status_id, tracker_type) VALUES (?, ?, ?, ?)`,
+		issue.IDSlug, issue.Title, issue.StatusID, issue.TrackerType,
 	)
 	if err != nil {
 		return fmt.Errorf("insert issue: %w", err)

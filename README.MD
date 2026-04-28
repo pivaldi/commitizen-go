@@ -51,12 +51,38 @@ Flags:
 
 If any commit flag is passed, the options page of the TUI form is skipped and the flags are used directly.
 
-### Issue (coming soon)
+### Issue
 ```
 $ git cz issue
+$ git cz issue start
 ```
 
-Starts a new piece of work: enter an issue ID, title, and type, then a properly named branch is created and checked out automatically. Branch state is tracked in `.git/git-cz.db`.
+Start work on an issue: optionally fetch open issues from a tracker (Redmine), or enter an issue ID, title, and type manually. A properly named branch is created and checked out automatically. Branch state is tracked in `.git/git-cz.db`.
+
+If a tracker is configured, `issue start` pre-selects fetching from the tracker; after picking an issue you can update its status to "In Progress" in one step.
+
+### Branch
+```
+$ git cz branch new       # create a branch with manual input
+$ git cz branch list      # list tracked branches
+$ git cz branch merge     # merge a branch via TUI
+$ git cz branch prune     # clean up stale DB records
+```
+
+`branch new` is the same flow as `issue start` but pre-selects manual input.
+
+`branch list` flags:
+```
+--status string   filter by status: in_progress, merged, all (default: in_progress)
+--stdout          print table to stdout without TUI
+--json            print JSON array to stdout
+```
+
+`branch prune` flags:
+```
+--base string   base branch for merge detection (default: auto-detected)
+--dry-run       show what would be pruned without executing
+```
 
 ### All commands
 ```
@@ -64,9 +90,10 @@ Usage:
   commitizen-go [command]
 
 Available Commands:
+  branch      Manage local branches
   commit      Record changes to the repository
   install     Install this tool to git-core as git-cz
-  issue       Start work on an issue (pick issue → create branch)
+  issue       Manage issues
   version     Print version information and quit
 
 Flags:
@@ -126,3 +153,34 @@ To override the base branch (default: auto-detected from `origin/HEAD`, then `ma
   }
 }
 ```
+
+### Tracker integration
+
+`git cz issue start` can fetch open issues assigned to you from a project tracker. Currently supported: **Redmine**.
+
+Add a `tracker` section to `.git-czrc`:
+
+```json
+{
+  "message": {…},
+  "tracker": {
+    "type": "redmine",
+    "url": "https://redmine.example.com",
+    "token": "YOUR_API_KEY",
+    "in_progress_status": "In Progress"
+  }
+}
+```
+
+| Key | Description |
+|-----|-------------|
+| `type` | Tracker type. Currently only `"redmine"` is supported. |
+| `url` | Base URL of your tracker instance. |
+| `token` | API key / personal access token. |
+| `in_progress_status` | Status name to set when work starts (default: `"In Progress"`). |
+
+When a tracker is configured:
+1. `issue start` asks whether to fetch issues from the tracker.
+2. If yes, open issues assigned to you are listed; type any key to filter the list, pick one and select a branch type.
+3. After the branch is created, you can update the issue status in the tracker in one step.
+4. If the tracker is unavailable or returns no issues, the flow falls back to manual input.

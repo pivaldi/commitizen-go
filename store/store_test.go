@@ -320,3 +320,51 @@ func TestDeleteBranch_notFound(t *testing.T) {
 		t.Error("expected error for missing uuid, got nil")
 	}
 }
+
+func TestInsertIssueWithBranch_trackerTypeNilStoresNull(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "TRK-1", Title: "Pre-tracker issue", StatusID: 1},
+		&Branch{UUID: "trk-uuid-1", Name: "TRK-1@feat@pre-tracker@trk-uuid-1", Type: "feat", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var trackerType *string
+	row := s.db.QueryRow("SELECT tracker_type FROM issues WHERE id_slug = ?", "TRK-1")
+	if err := row.Scan(&trackerType); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if trackerType != nil {
+		t.Errorf("tracker_type = %v, want nil (NULL)", trackerType)
+	}
+}
+
+func TestInsertIssueWithBranch_trackerTypeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	tt := "redmine"
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "TRK-2", Title: "Tracker issue", StatusID: 1, TrackerType: &tt},
+		&Branch{UUID: "trk-uuid-2", Name: "TRK-2@feat@tracker-issue@trk-uuid-2", Type: "feat", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var got *string
+	row := s.db.QueryRow("SELECT tracker_type FROM issues WHERE id_slug = ?", "TRK-2")
+	if err := row.Scan(&got); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if got == nil {
+		t.Fatal("tracker_type is nil, want non-nil")
+	}
+	if *got != "redmine" {
+		t.Errorf("tracker_type = %q, want %q", *got, "redmine")
+	}
+}
