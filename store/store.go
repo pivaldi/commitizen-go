@@ -40,6 +40,25 @@ type Branch struct {
 	MergedAt  *time.Time
 }
 
+// BranchStatus is the typed string representation of the statuses table.
+type BranchStatus string
+
+const (
+	BranchStatusInProgress BranchStatus = "in_progress"
+	BranchStatusMerged     BranchStatus = "merged"
+	BranchStatusAll        BranchStatus = "" // sentinel: no WHERE filter; not a DB value
+)
+
+// BranchRow is the joined result of one branch with its parent issue and status.
+type BranchRow struct {
+	IssueSlug  string       `json:"issue_slug"`
+	Title      string       `json:"title"`
+	BranchName string       `json:"branch_name"`
+	Type       string       `json:"type"`
+	Status     BranchStatus `json:"status"`
+	CreatedAt  time.Time    `json:"created_at"`
+}
+
 // Open opens (or creates) the SQLite database at dir/git-cz.db and runs pending migrations.
 func Open(ctx context.Context, dir string) (*Store, error) {
 	path := filepath.Join(dir, "git-cz.db")
@@ -154,6 +173,75 @@ func (s *Store) UpdateIssueStatus(ctx context.Context, issueID, statusID int64) 
 	}
 
 	return nil
+}
+
+// ListBranches returns all branches joined with their issue and status,
+// ordered by created_at DESC. BranchStatusAll returns every row.
+func (s *Store) ListBranches(ctx context.Context, status BranchStatus) ([]BranchRow, error) {
+	q := `
+		SELECT i.id_slug, i.title, b.name, b.type, st.name, b.created_at
+		FROM branches b
+		JOIN issues i ON b.issue_id = i.id
+		JOIN statuses st ON b.status_id = st.id`
+
+	var args []any
+	if status != BranchStatusAll {
+		q += " WHERE st.name = ?"
+		args = append(args, string(status))
+	}
+
+	q += " ORDER BY b.created_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list branches query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var result []BranchRow
+
+	for rows.Next() {
+		var r BranchRow
+		var createdAtStr string
+
+		if err := rows.Scan(
+			&r.IssueSlug, &r.Title, &r.BranchName, &r.Type, &r.Status, &createdAtStr,
+		); err != nil {
+			return nil, fmt.Errorf("scan branch row: %w", err)
+		}
+
+		t, parseErr := parseSQLiteTime(createdAtStr)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse branch created_at %q: %w", createdAtStr, parseErr)
+		}
+
+		r.CreatedAt = t
+		result = append(result, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate branches: %w", err)
+	}
+
+	if result == nil {
+		result = []BranchRow{}
+	}
+
+	return result, nil
+}
+
+// parseSQLiteTime parses the time string returned by modernc/sqlite for DATETIME columns.
+// The driver may return either RFC3339 ("2006-01-02T15:04:05Z") or SQLite text
+// ("2006-01-02 15:04:05") depending on whether the value originated from
+// CURRENT_TIMESTAMP or a literal string INSERT.
+func parseSQLiteTime(s string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unrecognised datetime format %q", s)
 }
 
 func (s *Store) migrate(ctx context.Context) error {

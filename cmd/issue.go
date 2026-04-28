@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/charmbracelet/huh"
@@ -111,7 +111,9 @@ func issueStartRunE(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create branch: %w", err)
 	}
 
-	persist(cmd.Context(), client, b, title)
+	if err := persist(cmd.Context(), client, b, title); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: branch created but store record failed: %v\n", err)
+	}
 
 	fmt.Printf("Switched to new branch %q (based on %q)\n", branchName, base)
 
@@ -131,25 +133,24 @@ func getAllowedBranchType(items []tui.CommitItem) []string {
 	return allowedBranchTypes
 }
 
-func persist(ctx context.Context, client *git.Client, b *branch.Branch, rawTitle string) {
+func persist(ctx context.Context, client *git.Client, b *branch.Branch, rawTitle string) error {
 	root, err := client.WorkingTreeRoot()
 	if err != nil {
-		log.Printf("branch %q created; could not open store: %v", b.Name(), err)
-
-		return
+		return fmt.Errorf("working tree root: %w", err)
 	}
 
 	s, err := store.Open(ctx, filepath.Join(root, ".git"))
 	if err != nil {
-		log.Printf("open store failed: %v", err)
-	} else {
-		defer func() { _ = s.Close() }()
-
-		if err := s.InsertIssueWithBranch(ctx,
-			&store.Issue{IDSlug: b.IssueID(), Title: rawTitle, StatusID: 1},
-			&store.Branch{UUID: b.ID(), Name: b.Name(), Type: b.Type(), StatusID: 1},
-		); err != nil {
-			log.Printf("store insert failed: %v", err)
-		}
+		return fmt.Errorf("open store: %w", err)
 	}
+	defer func() { _ = s.Close() }()
+
+	if err := s.InsertIssueWithBranch(ctx,
+		&store.Issue{IDSlug: b.IssueID(), Title: rawTitle, StatusID: 1},
+		&store.Branch{UUID: b.ID(), Name: b.Name(), Type: b.Type(), StatusID: 1},
+	); err != nil {
+		return fmt.Errorf("insert issue with branch: %w", err)
+	}
+
+	return nil
 }

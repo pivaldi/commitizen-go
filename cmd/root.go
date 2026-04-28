@@ -32,7 +32,7 @@ func GetRootCmd() (*cobra.Command, error) {
 	rootCmd.PersistentFlags().BoolVarP(&isDebug, "debug", "d", false,
 		"debug mode, output debug info to debug.log")
 
-	rootCmd.AddCommand(getCommitCmd(), getIssueCmd(), getVersionCmd(), getInstallCmd())
+	rootCmd.AddCommand(getCommitCmd(), getIssueCmd(), getBranchCmd(), getVersionCmd(), getInstallCmd())
 
 	return rootCmd, nil
 }

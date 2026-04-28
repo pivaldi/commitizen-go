@@ -89,6 +89,149 @@ func TestInsertIssueWithBranch(t *testing.T) {
 	}
 }
 
+func TestListBranches_all(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "A-1", Title: "First", StatusID: 1},
+		&Branch{UUID: "uuid-1", Name: "A-1@feat@first@uuid-1", Type: "feat", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "A-2", Title: "Second", StatusID: 1},
+		&Branch{UUID: "uuid-2", Name: "A-2@fix@second@uuid-2", Type: "fix", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusAll)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("got %d rows, want 2", len(rows))
+	}
+}
+
+func TestListBranches_filterInProgress(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "B-1", Title: "In progress issue", StatusID: 1},
+		&Branch{UUID: "uuid-ip", Name: "B-1@feat@in-progress@uuid-ip", Type: "feat", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert in_progress: %v", err)
+	}
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusInProgress)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Status != BranchStatusInProgress {
+		t.Errorf("Status = %q, want %q", rows[0].Status, BranchStatusInProgress)
+	}
+}
+
+func TestListBranches_filterMerged(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "C-1", Title: "Merged issue", StatusID: 1},
+		&Branch{UUID: "uuid-mg", Name: "C-1@feat@merged@uuid-mg", Type: "feat", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	now := time.Now()
+	if err := s.UpdateBranchStatus(t.Context(), "uuid-mg", 2, &now); err != nil {
+		t.Fatalf("UpdateBranchStatus: %v", err)
+	}
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusMerged)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Status != BranchStatusMerged {
+		t.Errorf("Status = %q, want %q", rows[0].Status, BranchStatusMerged)
+	}
+}
+
+func TestListBranches_empty(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusAll)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("got %d rows, want 0", len(rows))
+	}
+}
+
+func TestListBranches_order(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	// Insert two branches with explicit created_at values to test DESC ordering.
+	for _, row := range []struct {
+		uuid, slug, name, tp, dt string
+	}{
+		{"uuid-old", "D-1", "D-1@feat@old@uuid-old", "feat", "2025-01-01 00:00:00"},
+		{"uuid-new", "D-2", "D-2@feat@new@uuid-new", "feat", "2025-06-01 00:00:00"},
+	} {
+		if _, err := s.db.ExecContext(t.Context(),
+			`INSERT INTO issues (id_slug, title, status_id) VALUES (?, 'T', 1)`, row.slug,
+		); err != nil {
+			t.Fatalf("insert issue: %v", err)
+		}
+
+		var issueID int64
+		if err := s.db.QueryRowContext(t.Context(),
+			"SELECT last_insert_rowid()",
+		).Scan(&issueID); err != nil {
+			t.Fatalf("last insert id: %v", err)
+		}
+
+		if _, err := s.db.ExecContext(t.Context(),
+			`INSERT INTO branches (uuid, name, issue_id, type, status_id, created_at)
+			 VALUES (?, ?, ?, ?, 1, ?)`,
+			row.uuid, row.name, issueID, row.tp, row.dt,
+		); err != nil {
+			t.Fatalf("insert branch: %v", err)
+		}
+	}
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusAll)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0].IssueSlug != "D-2" {
+		t.Errorf("first row (newest) = %q, want %q", rows[0].IssueSlug, "D-2")
+	}
+	if rows[1].IssueSlug != "D-1" {
+		t.Errorf("second row (oldest) = %q, want %q", rows[1].IssueSlug, "D-1")
+	}
+}
+
 func TestUpdateBranchStatus_merged(t *testing.T) {
 	t.Parallel()
 

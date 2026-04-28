@@ -1,5 +1,10 @@
 # .golangci.yml
 version: "2"
+linters-settings:
+  tagliatelle:
+    case:
+      rules:
+        json: snake
 run:
   go: "1.24"
   issues-exit-code: 1
@@ -874,7 +879,7 @@ linters:
           bson: camel
           env: upperSnake
           envconfig: upperSnake
-          json: camel
+          json: snake
           mapstructure: kebab
           xml: camel
           yaml: camel

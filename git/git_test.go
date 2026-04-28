@@ -415,3 +415,33 @@ func TestCreateBranch(t *testing.T) {
 		t.Errorf("HEAD = %q, want new branch", head.Name().Short())
 	}
 }
+
+func TestCreateBranch_withUnstagedChanges(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+	wt, _ := repo.Worktree()
+
+	// Create an unstaged modification to an already-tracked file.
+	f, err := wt.Filesystem.OpenFile("README.md", 2|0x200, 0o644) // O_WRONLY|O_TRUNC
+	if err != nil {
+		t.Fatalf("open README.md: %v", err)
+	}
+	_, _ = f.Write([]byte("# unstaged change"))
+	_ = f.Close()
+
+	client := &Client{repo: repo}
+
+	// Must not fail even though the worktree has unstaged changes.
+	if err := client.CreateBranch("42@fix@some-fix@aabbccdd", "master"); err != nil {
+		t.Fatalf("CreateBranch with unstaged changes: %v", err)
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	if head.Name().Short() != "42@fix@some-fix@aabbccdd" {
+		t.Errorf("HEAD = %q, want new branch", head.Name().Short())
+	}
+}

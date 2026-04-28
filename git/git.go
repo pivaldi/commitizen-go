@@ -247,6 +247,7 @@ func (c *Client) CreateBranch(name, baseBranch string) error {
 		Hash:   baseRef.Hash(),
 		Branch: plumbing.ReferenceName("refs/heads/" + name),
 		Create: true,
+		Keep:   true,
 	}); err != nil {
 		return fmt.Errorf("create branch %q: %w", name, err)
 	}
