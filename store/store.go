@@ -51,6 +51,7 @@ const (
 
 // BranchRow is the joined result of one branch with its parent issue and status.
 type BranchRow struct {
+	UUID       string       `json:"uuid"`
 	IssueSlug  string       `json:"issue_slug"`
 	Title      string       `json:"title"`
 	BranchName string       `json:"branch_name"`
@@ -179,7 +180,7 @@ func (s *Store) UpdateIssueStatus(ctx context.Context, issueID, statusID int64) 
 // ordered by created_at DESC. BranchStatusAll returns every row.
 func (s *Store) ListBranches(ctx context.Context, status BranchStatus) ([]BranchRow, error) {
 	q := `
-		SELECT i.id_slug, i.title, b.name, b.type, st.name, b.created_at
+		SELECT b.uuid, i.id_slug, i.title, b.name, b.type, st.name, b.created_at
 		FROM branches b
 		JOIN issues i ON b.issue_id = i.id
 		JOIN statuses st ON b.status_id = st.id`
@@ -205,7 +206,7 @@ func (s *Store) ListBranches(ctx context.Context, status BranchStatus) ([]Branch
 		var createdAtStr string
 
 		if err := rows.Scan(
-			&r.IssueSlug, &r.Title, &r.BranchName, &r.Type, &r.Status, &createdAtStr,
+			&r.UUID, &r.IssueSlug, &r.Title, &r.BranchName, &r.Type, &r.Status, &createdAtStr,
 		); err != nil {
 			return nil, fmt.Errorf("scan branch row: %w", err)
 		}
@@ -228,6 +229,25 @@ func (s *Store) ListBranches(ctx context.Context, status BranchStatus) ([]Branch
 	}
 
 	return result, nil
+}
+
+// DeleteBranch removes the branch record identified by uuid.
+func (s *Store) DeleteBranch(ctx context.Context, uuid string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM branches WHERE uuid = ?`, uuid)
+	if err != nil {
+		return fmt.Errorf("delete branch: %w", err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+
+	if n == 0 {
+		return fmt.Errorf("delete branch: no branch with uuid %q", uuid)
+	}
+
+	return nil
 }
 
 // parseSQLiteTime parses the time string returned by modernc/sqlite for DATETIME columns.

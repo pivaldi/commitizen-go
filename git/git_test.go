@@ -396,6 +396,101 @@ func TestCommit_summary_rootCommit(t *testing.T) {
 	}
 }
 
+func TestLocalBranchNames(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+	client := &Client{repo: repo}
+
+	// newTestRepo creates one commit on master.
+	names, err := client.LocalBranchNames()
+	if err != nil {
+		t.Fatalf("LocalBranchNames: %v", err)
+	}
+	if len(names) != 1 || names[0] != "master" {
+		t.Errorf("LocalBranchNames = %v, want [master]", names)
+	}
+
+	// Create a second branch and verify it appears.
+	if err := client.CreateBranch("feature/x", "master"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+
+	names2, err := client.LocalBranchNames()
+	if err != nil {
+		t.Fatalf("LocalBranchNames after create: %v", err)
+	}
+	if len(names2) != 2 {
+		t.Errorf("got %d branch names, want 2: %v", len(names2), names2)
+	}
+}
+
+func TestIsMergedInto_merged(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+	wt, _ := repo.Worktree()
+	client := &Client{repo: repo}
+
+	// Create a feature branch with one extra commit.
+	if err := client.CreateBranch("feature/y", "master"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	stageNewFile(t, wt, "feat.txt", "content")
+	if _, err := client.Commit([]byte("feat: add feature"), CommitOptions{}); err != nil {
+		t.Fatalf("Commit on feature: %v", err)
+	}
+
+	// Switch back to master and merge feature/y by fast-forward.
+	featureRef, _ := repo.Reference(plumbing.ReferenceName("refs/heads/feature/y"), true)
+	if err := wt.Checkout(&gogit.CheckoutOptions{Branch: "refs/heads/master", Keep: true}); err != nil {
+		t.Fatalf("checkout master: %v", err)
+	}
+	// Fast-forward master to feature/y's tip.
+	masterRef := plumbing.NewHashReference(plumbing.ReferenceName("refs/heads/master"), featureRef.Hash())
+	if err := repo.Storer.SetReference(masterRef); err != nil {
+		t.Fatalf("fast-forward master: %v", err)
+	}
+
+	merged, err := client.IsMergedInto("feature/y", "master")
+	if err != nil {
+		t.Fatalf("IsMergedInto: %v", err)
+	}
+	if !merged {
+		t.Error("IsMergedInto = false, want true after fast-forward merge")
+	}
+}
+
+func TestIsMergedInto_notMerged(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepo(t)
+	client := &Client{repo: repo}
+
+	// Create a feature branch but do NOT merge it.
+	if err := client.CreateBranch("feature/z", "master"); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	wt, _ := repo.Worktree()
+	stageNewFile(t, wt, "unmerged.txt", "content")
+	if _, err := client.Commit([]byte("feat: unmerged"), CommitOptions{}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Switch back to master (which hasn't moved).
+	if err := wt.Checkout(&gogit.CheckoutOptions{Branch: "refs/heads/master", Keep: true}); err != nil {
+		t.Fatalf("checkout master: %v", err)
+	}
+
+	merged, err := client.IsMergedInto("feature/z", "master")
+	if err != nil {
+		t.Fatalf("IsMergedInto: %v", err)
+	}
+	if merged {
+		t.Error("IsMergedInto = true, want false for unmerged branch")
+	}
+}
+
 func TestCreateBranch(t *testing.T) {
 	t.Parallel()
 

@@ -9,6 +9,17 @@ import (
 	"github.com/lintingzhen/commitizen-go/store"
 )
 
+// fakePruner implements branchPruner for tests without a real git repository.
+type fakePruner struct {
+	base       string
+	localNames []string
+	mergedSet  map[string]bool
+}
+
+func (f *fakePruner) DefaultBaseBranch() (string, error)           { return f.base, nil }
+func (f *fakePruner) LocalBranchNames() ([]string, error)          { return f.localNames, nil }
+func (f *fakePruner) IsMergedInto(name, _ string) (bool, error)    { return f.mergedSet[name], nil }
+
 func openTestBranchStore(t *testing.T) *store.Store {
 	t.Helper()
 
@@ -111,5 +122,119 @@ func TestBranchList_stdout_emptyStore(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "No branches found.") {
 		t.Errorf("expected 'No branches found.', got: %q", buf.String())
+	}
+}
+
+// --- prune tests ---
+
+func insertTestBranch(t *testing.T, s *store.Store, uuid, slug, name, btype string) {
+	t.Helper()
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&store.Issue{IDSlug: slug, Title: slug, StatusID: 1},
+		&store.Branch{UUID: uuid, Name: name, Type: btype, StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert %s: %v", name, err)
+	}
+}
+
+func TestRunBranchPrune_deletesGoneRef(t *testing.T) {
+	t.Parallel()
+
+	s := openTestBranchStore(t)
+	insertTestBranch(t, s, "uuid-1", "ABC-1", "ABC-1@feat@gone@uuid-1", "feat")
+
+	pruner := &fakePruner{base: "master", localNames: []string{"master"}}
+
+	var buf bytes.Buffer
+	if err := runBranchPrune(t.Context(), &buf, s, pruner, branchPruneFlags{dryRun: true}); err != nil {
+		t.Fatalf("runBranchPrune: %v", err)
+	}
+	if !strings.Contains(buf.String(), "ABC-1@feat@gone@uuid-1") {
+		t.Errorf("expected deleted branch in output, got: %q", buf.String())
+	}
+
+	// dry-run must not mutate the store.
+	rows, _ := s.ListBranches(t.Context(), store.BranchStatusAll)
+	if len(rows) != 1 {
+		t.Errorf("store should be unchanged after dry-run, got %d rows", len(rows))
+	}
+}
+
+func TestRunBranchPrune_marksMerged(t *testing.T) {
+	t.Parallel()
+
+	s := openTestBranchStore(t)
+	insertTestBranch(t, s, "uuid-2", "XY-1", "XY-1@fix@bug@uuid-2", "fix")
+
+	pruner := &fakePruner{
+		base:       "master",
+		localNames: []string{"master", "XY-1@fix@bug@uuid-2"},
+		mergedSet:  map[string]bool{"XY-1@fix@bug@uuid-2": true},
+	}
+
+	var buf bytes.Buffer
+	if err := runBranchPrune(t.Context(), &buf, s, pruner, branchPruneFlags{dryRun: true}); err != nil {
+		t.Fatalf("runBranchPrune: %v", err)
+	}
+	if !strings.Contains(buf.String(), "XY-1@fix@bug@uuid-2") {
+		t.Errorf("expected merged branch in output, got: %q", buf.String())
+	}
+}
+
+func TestRunBranchPrune_nothingToPrune(t *testing.T) {
+	t.Parallel()
+
+	s := openTestBranchStore(t)
+	insertTestBranch(t, s, "uuid-3", "Z-1", "Z-1@feat@active@uuid-3", "feat")
+
+	pruner := &fakePruner{
+		base:       "master",
+		localNames: []string{"master", "Z-1@feat@active@uuid-3"},
+		mergedSet:  map[string]bool{},
+	}
+
+	var buf bytes.Buffer
+	if err := runBranchPrune(t.Context(), &buf, s, pruner, branchPruneFlags{dryRun: true}); err != nil {
+		t.Fatalf("runBranchPrune: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Nothing to prune.") {
+		t.Errorf("expected 'Nothing to prune.', got: %q", buf.String())
+	}
+}
+
+func TestRunBranchPrune_mixedDryRun(t *testing.T) {
+	t.Parallel()
+
+	s := openTestBranchStore(t)
+	insertTestBranch(t, s, "del-1", "DEL-1", "DEL-1@feat@gone@del-1", "feat")
+	insertTestBranch(t, s, "mrg-1", "MRG-1", "MRG-1@fix@done@mrg-1", "fix")
+	insertTestBranch(t, s, "act-1", "ACT-1", "ACT-1@feat@active@act-1", "feat")
+
+	pruner := &fakePruner{
+		base:       "master",
+		localNames: []string{"master", "MRG-1@fix@done@mrg-1", "ACT-1@feat@active@act-1"},
+		mergedSet:  map[string]bool{"MRG-1@fix@done@mrg-1": true},
+	}
+
+	var buf bytes.Buffer
+	if err := runBranchPrune(t.Context(), &buf, s, pruner, branchPruneFlags{dryRun: true}); err != nil {
+		t.Fatalf("runBranchPrune: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "DEL-1@feat@gone@del-1") {
+		t.Errorf("expected deleted branch in output, got: %q", out)
+	}
+	if !strings.Contains(out, "MRG-1@fix@done@mrg-1") {
+		t.Errorf("expected merged branch in output, got: %q", out)
+	}
+	if strings.Contains(out, "ACT-1@feat@active@act-1") {
+		t.Errorf("active branch must not appear in output, got: %q", out)
+	}
+
+	// dry-run: store unchanged.
+	rows, _ := s.ListBranches(t.Context(), store.BranchStatusAll)
+	if len(rows) != 3 {
+		t.Errorf("store should be unchanged after dry-run, got %d rows", len(rows))
 	}
 }

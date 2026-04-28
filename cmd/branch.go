@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	btable "github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,7 +44,7 @@ func getBranchCmd() *cobra.Command {
 		Short: "Manage local branches",
 		RunE:  branchRunE,
 	}
-	cmd.AddCommand(getBranchListCmd(), getBranchNewCmd(), getBranchMergeCmd())
+	cmd.AddCommand(getBranchListCmd(), getBranchNewCmd(), getBranchPruneCmd(), getBranchMergeCmd())
 
 	return cmd
 }
@@ -59,6 +61,8 @@ func branchRunE(cmd *cobra.Command, args []string) error {
 		return branchListRunE(cmd, branchListFlags{})
 	case tui.BranchActionNameNew:
 		return branchNewRunE(cmd, args)
+	case tui.BranchActionNamePrune:
+		return branchPruneRunE(cmd, branchPruneFlags{})
 	default:
 		fmt.Println("Not yet implemented.")
 
@@ -269,6 +273,176 @@ func getBranchNewCmd() *cobra.Command {
 // Step 2b: add toggle to tracker-picker.
 func branchNewRunE(cmd *cobra.Command, args []string) error {
 	return issueStartRunE(cmd, args)
+}
+
+type branchPruneFlags struct {
+	dryRun bool
+	base   string
+}
+
+// pruneResult holds branches categorised by prune action.
+type pruneResult struct {
+	toDelete []store.BranchRow // local ref gone — remove DB record
+	toMerge  []store.BranchRow // tip reachable from base — mark merged
+}
+
+func getBranchPruneCmd() *cobra.Command {
+	var flags branchPruneFlags
+
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove DB records for branches deleted or merged outside cz",
+		Long: `Scans all in-progress branches in the local store and:
+  - deletes records whose local git ref no longer exists
+  - marks records as merged when their tip is reachable from the base branch`,
+	}
+
+	cmd.Flags().BoolVar(&flags.dryRun, "dry-run", false, "show what would be pruned without executing")
+	cmd.Flags().StringVar(&flags.base, "base", "", "base branch for merge detection (default: auto-detected)")
+
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		return branchPruneRunE(cmd, flags)
+	}
+
+	return cmd
+}
+
+// branchPruner is the subset of git.Client that branchPrune needs,
+// allowing tests to inject a fake without a real git repository.
+type branchPruner interface {
+	DefaultBaseBranch() (string, error)
+	LocalBranchNames() ([]string, error)
+	IsMergedInto(branchName, base string) (bool, error)
+}
+
+func branchPruneRunE(cmd *cobra.Command, flags branchPruneFlags) error {
+	client, err := git.NewClient()
+	if err != nil {
+		return fmt.Errorf("not a git repository: %w", err)
+	}
+
+	root, err := client.WorkingTreeRoot()
+	if err != nil {
+		return fmt.Errorf("working tree root: %w", err)
+	}
+
+	s, err := store.Open(cmd.Context(), filepath.Join(root, ".git"))
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	return runBranchPrune(cmd.Context(), os.Stdout, s, client, flags)
+}
+
+// runBranchPrune executes the prune logic. w receives non-TUI output.
+// When dryRun is true it prints the summary and returns without mutating the store.
+func runBranchPrune(ctx context.Context, w io.Writer, s *store.Store, pruner branchPruner, flags branchPruneFlags) error {
+	base := flags.base
+	if base == "" {
+		var err error
+		base, err = pruner.DefaultBaseBranch()
+		if err != nil {
+			return fmt.Errorf("detect base branch: %w", err)
+		}
+	}
+
+	localNames, err := pruner.LocalBranchNames()
+	if err != nil {
+		return fmt.Errorf("list local branches: %w", err)
+	}
+
+	localSet := make(map[string]struct{}, len(localNames))
+	for _, n := range localNames {
+		localSet[n] = struct{}{}
+	}
+
+	rows, err := s.ListBranches(ctx, store.BranchStatusInProgress)
+	if err != nil {
+		return fmt.Errorf("list branches: %w", err)
+	}
+
+	var result pruneResult
+
+	for _, row := range rows {
+		if _, exists := localSet[row.BranchName]; !exists {
+			result.toDelete = append(result.toDelete, row)
+
+			continue
+		}
+
+		merged, mergeErr := pruner.IsMergedInto(row.BranchName, base)
+		if mergeErr != nil {
+			log.Printf("merge check for %q: %v", row.BranchName, mergeErr)
+
+			continue
+		}
+
+		if merged {
+			result.toMerge = append(result.toMerge, row)
+		}
+	}
+
+	if len(result.toDelete) == 0 && len(result.toMerge) == 0 {
+		fmt.Fprintln(w, "Nothing to prune.")
+
+		return nil
+	}
+
+	renderPruneSummary(w, result)
+
+	if flags.dryRun {
+		return nil
+	}
+
+	var confirmed bool
+	if err := huh.NewForm(tui.BranchPruneConfirm(len(result.toDelete), len(result.toMerge), &confirmed)).Run(); err != nil {
+		return fmt.Errorf("confirm: %w", err)
+	}
+
+	if !confirmed {
+		fmt.Fprintln(w, "Aborted.")
+
+		return nil
+	}
+
+	return executePrune(ctx, s, result)
+}
+
+func renderPruneSummary(w io.Writer, result pruneResult) {
+	if len(result.toDelete) > 0 {
+		fmt.Fprintln(w, "Will delete (local ref gone):")
+		for _, r := range result.toDelete {
+			fmt.Fprintf(w, "  - %s\n", r.BranchName)
+		}
+	}
+
+	if len(result.toMerge) > 0 {
+		fmt.Fprintln(w, "Will mark merged (tip reachable from base):")
+		for _, r := range result.toMerge {
+			fmt.Fprintf(w, "  ~ %s\n", r.BranchName)
+		}
+	}
+}
+
+func executePrune(ctx context.Context, s *store.Store, result pruneResult) error {
+	now := time.Now()
+
+	for _, r := range result.toDelete {
+		if err := s.DeleteBranch(ctx, r.UUID); err != nil {
+			return fmt.Errorf("delete %q: %w", r.BranchName, err)
+		}
+	}
+
+	for _, r := range result.toMerge {
+		if err := s.UpdateBranchStatus(ctx, r.UUID, 2, &now); err != nil {
+			return fmt.Errorf("mark merged %q: %w", r.BranchName, err)
+		}
+	}
+
+	fmt.Printf("Pruned: %d deleted, %d marked merged.\n", len(result.toDelete), len(result.toMerge))
+
+	return nil
 }
 
 func getBranchMergeCmd() *cobra.Command {

@@ -228,6 +228,60 @@ func (c *Client) DefaultBaseBranch() (string, error) {
 	return "", errors.New("could not detect default base branch")
 }
 
+// LocalBranchNames returns the short names of all local branches.
+func (c *Client) LocalBranchNames() ([]string, error) {
+	iter, err := c.repo.Branches()
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+
+	var names []string
+	if err := iter.ForEach(func(ref *plumbing.Reference) error {
+		names = append(names, ref.Name().Short())
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("iterate branches: %w", err)
+	}
+
+	return names, nil
+}
+
+// IsMergedInto reports whether branchName's tip commit is reachable from baseBranch,
+// i.e. whether the branch has been merged into base (mirrors git merge-base --is-ancestor).
+func (c *Client) IsMergedInto(branchName, baseBranch string) (bool, error) {
+	branchRef, err := c.repo.Reference(plumbing.ReferenceName("refs/heads/"+branchName), true)
+	if err != nil {
+		return false, fmt.Errorf("resolve branch %q: %w", branchName, err)
+	}
+
+	baseRef, err := c.repo.Reference(plumbing.ReferenceName("refs/heads/"+baseBranch), true)
+	if err != nil {
+		// Try remote tracking branch as fallback.
+		baseRef, err = c.repo.Reference(plumbing.ReferenceName("refs/remotes/origin/"+baseBranch), true)
+		if err != nil {
+			return false, fmt.Errorf("resolve base branch %q: %w", baseBranch, err)
+		}
+	}
+
+	branchCommit, err := c.repo.CommitObject(branchRef.Hash())
+	if err != nil {
+		return false, fmt.Errorf("branch commit: %w", err)
+	}
+
+	baseCommit, err := c.repo.CommitObject(baseRef.Hash())
+	if err != nil {
+		return false, fmt.Errorf("base commit: %w", err)
+	}
+
+	merged, err := branchCommit.IsAncestor(baseCommit)
+	if err != nil {
+		return false, fmt.Errorf("is ancestor: %w", err)
+	}
+
+	return merged, nil
+}
+
 // CreateBranch creates a new branch from baseBranch and checks it out.
 func (c *Client) CreateBranch(name, baseBranch string) error {
 	baseRef, err := c.repo.Reference(plumbing.ReferenceName("refs/heads/"+baseBranch), true)

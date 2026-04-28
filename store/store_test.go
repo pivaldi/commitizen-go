@@ -263,3 +263,60 @@ func TestUpdateBranchStatus_merged(t *testing.T) {
 		t.Errorf("status_id = %d, want 2", statusID)
 	}
 }
+
+func TestListBranches_uuidPopulated(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "U-1", Title: "uuid test", StatusID: 1},
+		&Branch{UUID: "deadbeef", Name: "U-1@feat@uuid-test@deadbeef", Type: "feat", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusAll)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].UUID != "deadbeef" {
+		t.Errorf("UUID = %q, want %q", rows[0].UUID, "deadbeef")
+	}
+}
+
+func TestDeleteBranch(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+	if err := s.InsertIssueWithBranch(t.Context(),
+		&Issue{IDSlug: "DEL-1", Title: "to delete", StatusID: 1},
+		&Branch{UUID: "cafebabe", Name: "DEL-1@fix@to-delete@cafebabe", Type: "fix", StatusID: 1},
+	); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if err := s.DeleteBranch(t.Context(), "cafebabe"); err != nil {
+		t.Fatalf("DeleteBranch: %v", err)
+	}
+
+	rows, err := s.ListBranches(t.Context(), BranchStatusAll)
+	if err != nil {
+		t.Fatalf("ListBranches: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("got %d rows after delete, want 0", len(rows))
+	}
+}
+
+func TestDeleteBranch_notFound(t *testing.T) {
+	t.Parallel()
+
+	s := openTestStore(t)
+
+	if err := s.DeleteBranch(t.Context(), "nonexistent"); err == nil {
+		t.Error("expected error for missing uuid, got nil")
+	}
+}
