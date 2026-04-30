@@ -6,13 +6,20 @@ import (
 	"log"
 	"os"
 
+	"github.com/lintingzhen/commitizen-go/config"
 	"github.com/lintingzhen/commitizen-go/git"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-var isDebug bool
+const configFileName = ".git-zf"
+const configFileExt = "json"
+
+var (
+	isDebug   bool
+	appConfig config.AppConfig
+)
 
 // GetRootCmd builds and returns the root Cobra command.
 func GetRootCmd() (*cobra.Command, error) {
@@ -37,8 +44,9 @@ func GetRootCmd() (*cobra.Command, error) {
 	return rootCmd, nil
 }
 
-// initConfig sets up logging and loads the .git-czrc config file via Viper.
-// Not being inside a git repo is not a fatal error — git cz version/install must work anywhere.
+// initConfig sets up logging, loads the .git-czrc config file via Viper, then
+// parses the full AppConfig. Not being inside a git repo is not a fatal error —
+// git cz version/install must work anywhere.
 func initConfig() error {
 	if !isDebug {
 		log.SetOutput(io.Discard)
@@ -47,17 +55,13 @@ func initConfig() error {
 		if err != nil {
 			return fmt.Errorf("failed to open debug.log: %w", err)
 		}
+
 		log.SetFlags(log.Lshortfile | log.LstdFlags)
 		log.SetOutput(f)
 	}
 
-	home, err := homedir.Dir()
-	if err != nil {
-		return fmt.Errorf("get home dir failed: %w", err)
-	}
-
-	viper.SetConfigName(".git-czrc")
-	viper.SetConfigType("json")
+	viper.SetConfigName(fmt.Sprintf("%s.%s", configFileName, configFileExt))
+	viper.SetConfigType(configFileExt)
 
 	// Repo-root config takes priority over home: add it first so Viper searches it first.
 	if client, err := git.NewClient(); err == nil {
@@ -65,16 +69,26 @@ func initConfig() error {
 			viper.AddConfigPath(root)
 		}
 	}
+
+	home, err := homedir.Dir()
+	if err != nil {
+		return fmt.Errorf("get home dir failed: %w", err)
+	}
 	viper.AddConfigPath(home)
 
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			log.Println("can not find config file")
-		} else {
-			log.Printf("read config failed, err=%v\n", err)
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return fmt.Errorf("read config failed: %w", err)
 		}
+
+		log.Println("can not find config file")
 	} else {
 		log.Println("read config success")
+	}
+
+	appConfig, err = config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load app config: %w", err)
 	}
 
 	return nil

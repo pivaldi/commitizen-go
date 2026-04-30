@@ -4,23 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/charmbracelet/huh"
 	"github.com/lintingzhen/commitizen-go/branch"
+	"github.com/lintingzhen/commitizen-go/config"
 	"github.com/lintingzhen/commitizen-go/git"
+	"github.com/lintingzhen/commitizen-go/issue"
 	"github.com/lintingzhen/commitizen-go/store"
 	"github.com/lintingzhen/commitizen-go/tracker"
 	_ "github.com/lintingzhen/commitizen-go/tracker/redmine" // registers redmine adapter
 	"github.com/lintingzhen/commitizen-go/tui"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
-
-type issueStartFlags struct {
-	trackerFirst bool
-}
 
 func getIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -60,97 +56,61 @@ checked out from the default base branch. Branch state is saved to .git/git-cz.d
 }
 
 func issueStartRunE(cmd *cobra.Command, _ []string) error {
-	return runIssueStart(cmd.Context(), issueStartFlags{trackerFirst: true})
+	return runIssueStart(cmd, issue.IssueStartFlags{TrackerFirst: true})
 }
 
 // runIssueStart contains the full issue-start flow. trackerFirst=true for
 // `issue start` (tracker pre-selected); false for `branch new` (manual pre-selected).
-func runIssueStart(ctx context.Context, flags issueStartFlags) error {
+func runIssueStart(cmd *cobra.Command, flags issue.IssueStartFlags) error {
+	ctx := cmd.Context()
 	client, err := git.NewClient()
 	if err != nil {
 		return fmt.Errorf("not a git repository: %w", err)
 	}
 
-	msgCfg, err := loadMessageConfig()
-	if err != nil {
-		return fmt.Errorf("load message config: %w", err)
+	allowedBranchTypes := getAllowedBranchType(appConfig.CommitTypes)
+	if len(allowedBranchTypes) == 0 {
+		return errors.New("config: no commit types found")
 	}
 
-	base := viper.GetString("branch.base")
+	trackerCfg := appConfig.IssueTracker
+	var pickedIssue *issue.Issue
+	var t tracker.Tracker
+
+	if trackerCfg.Type != "" {
+		t, err = tracker.New(trackerCfg)
+		if err != nil {
+			return fmt.Errorf("failed get tracker: %w", err)
+		}
+
+		pickedIssue, err = getFromTracker(ctx, t, flags, allowedBranchTypes)
+		if err != nil {
+			return fmt.Errorf("failed to retreive issue from tracker: %w", err)
+		}
+	} else {
+		pickedIssue, err = issue.GetFromUser(allowedBranchTypes)
+		if err != nil {
+			return fmt.Errorf("failed to retreive issue from user: %w", err)
+		}
+	}
+
+	return createBranch(cmd, t, pickedIssue, client)
+}
+
+func createBranch(cmd *cobra.Command, t tracker.Tracker, pickedIssue *issue.Issue, client *git.Client) error {
+	b, err := branch.New(pickedIssue.ID, pickedIssue.Type, pickedIssue.Subject)
+	if err != nil {
+		return fmt.Errorf("assemble branch name: %w", err)
+	}
+
+	branchName := b.Name()
+	base := appConfig.Branch.Base
 	if base == "" {
 		base, err = client.DefaultBaseBranch()
 		if err != nil {
 			return fmt.Errorf("detect base branch: %w", err)
 		}
 	}
-
-	allowedBranchTypes := getAllowedBranchType(msgCfg.Items)
-	if len(allowedBranchTypes) == 0 {
-		return errors.New("message config: no type options found in first item")
-	}
-
-	trackerCfg := tracker.Config{
-		Type:             viper.GetString("tracker.type"),
-		URL:              viper.GetString("tracker.url"),
-		Token:            viper.GetString("tracker.token"),
-		InProgressStatus: viper.GetString("tracker.in_progress_status"),
-	}
-	if trackerCfg.InProgressStatus == "" {
-		trackerCfg.InProgressStatus = "In Progress"
-	}
-
-	var issueID, title, branchType string
-	var fromTracker bool
-	var pickedIssue tracker.Issue
-	var t tracker.Tracker
-
-	if trackerCfg.Type != "" {
-		t, err = tracker.New(trackerCfg)
-		if err != nil {
-			return fmt.Errorf("create tracker: %w", err)
-		}
-
-		var useTracker bool
-		if err := huh.NewForm(tui.IssueTrackerToggle(&useTracker, flags.trackerFirst, trackerCfg.Type)).Run(); err != nil {
-			return fmt.Errorf("tracker toggle: %w", err)
-		}
-
-		if useTracker {
-			issues, listErr := t.ListIssues(ctx)
-			if listErr != nil {
-				if noteErr := huh.NewForm(tui.IssueTrackerError(listErr.Error())).Run(); noteErr != nil {
-					return fmt.Errorf("error note: %w", noteErr)
-				}
-				// fallthrough to manual input
-			} else if len(issues) == 0 {
-				if noteErr := huh.NewForm(tui.IssueTrackerError("no open issues assigned to you")).Run(); noteErr != nil {
-					return fmt.Errorf("error note: %w", noteErr)
-				}
-				// fallthrough to manual input
-			} else {
-				if err := huh.NewForm(tui.IssueTrackerPicker(issues, &pickedIssue, allowedBranchTypes, &branchType)).Run(); err != nil {
-					return fmt.Errorf("tracker picker: %w", err)
-				}
-
-				issueID = pickedIssue.ID
-				title = pickedIssue.Subject
-				fromTracker = true
-			}
-		}
-	}
-
-	if !fromTracker {
-		if err := huh.NewForm(tui.IssueInput(&issueID, &title, &branchType, allowedBranchTypes)).Run(); err != nil {
-			return fmt.Errorf("issue form: %w", err)
-		}
-	}
-
-	b, err := branch.New(issueID, branchType, title)
-	if err != nil {
-		return fmt.Errorf("assemble branch name: %w", err)
-	}
-
-	branchName := b.Name()
 
 	var confirmed bool
 	if err := huh.NewForm(tui.IssueConfirm(
@@ -170,40 +130,65 @@ func runIssueStart(ctx context.Context, flags issueStartFlags) error {
 	}
 
 	var tt *string
-	if fromTracker {
-		tt = &trackerCfg.Type
+	if pickedIssue.TrackerType != "" {
+		tt = &appConfig.IssueTracker.Type
 	}
 
-	if err := persist(ctx, client, b, title, tt); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: branch created but store record failed: %v\n", err)
+	if err := persist(cmd.Context(), client, b, pickedIssue.Subject, tt); err != nil {
+		fmt.Fprintf(cmd.OutOrStderr(), "warning: branch created but store record failed: %v\n", err)
 	}
 
 	fmt.Printf("Switched to new branch %q (based on %q)\n", branchName, base)
 
-	if fromTracker {
-		var updateStatus bool
-		if err := huh.NewForm(tui.IssueUpdateStatusConfirm(
-			pickedIssue.ID, trackerCfg.InProgressStatus, trackerCfg.Type, &updateStatus,
-		)).Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: status confirm form: %v\n", err)
-		} else if updateStatus {
-			if err := t.UpdateIssueStatus(ctx, pickedIssue.ID, trackerCfg.InProgressStatus); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not update tracker status: %v\n", err)
-			}
-		}
+	if pickedIssue.TrackerType != "" {
+		updateTrackerIssueStatus(cmd, t, pickedIssue.ID)
 	}
 
 	return nil
 }
 
-func getAllowedBranchType(items []tui.CommitItem) []string {
-	if len(items) == 0 {
-		return nil
+func updateTrackerIssueStatus(cmd *cobra.Command, t tracker.Tracker, issueID string) {
+	var updateStatus bool
+	if err := huh.NewForm(tui.IssueUpdateStatusConfirm(
+		issueID, appConfig.IssueTracker.InProgressStatus, appConfig.IssueTracker.Type, &updateStatus,
+	)).Run(); err != nil {
+		fmt.Fprintf(cmd.OutOrStderr(), "warning: status confirm form: %v\n", err)
+	} else if updateStatus {
+		if err := t.UpdateIssueStatus(cmd.Context(), issueID, appConfig.IssueTracker.InProgressStatus); err != nil {
+			fmt.Fprintf(cmd.OutOrStderr(), "warning: could not update tracker status: %v\n", err)
+		}
+	}
+}
+
+func getFromTracker(
+	ctx context.Context,
+	t tracker.Tracker,
+	flags issue.IssueStartFlags,
+	allowedBranchTypes []string,
+) (*issue.Issue, error) {
+	var useTracker bool
+	var pickedIssue *issue.Issue
+	var err error
+
+	issueTrackerToggle := tui.IssueTrackerToggle(&useTracker, flags.TrackerFirst, appConfig.IssueTracker.Type)
+	if err = huh.NewForm(issueTrackerToggle).Run(); err != nil {
+		return nil, fmt.Errorf("tracker toggle error: %w", err)
 	}
 
-	allowedBranchTypes := make([]string, 0, len(items[0].Options))
-	for _, opt := range items[0].Options {
-		allowedBranchTypes = append(allowedBranchTypes, opt.Name)
+	if useTracker {
+		pickedIssue, err = issue.GetFromTracker(ctx, t, allowedBranchTypes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retreive issue from tracker: %w", err)
+		}
+	}
+
+	return pickedIssue, nil
+}
+
+func getAllowedBranchType(types []config.CommitTypeOption) []string {
+	allowedBranchTypes := make([]string, 0, len(types))
+	for _, t := range types {
+		allowedBranchTypes = append(allowedBranchTypes, t.Name)
 	}
 
 	return allowedBranchTypes

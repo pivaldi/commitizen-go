@@ -7,9 +7,7 @@ import (
 	"github.com/lintingzhen/commitizen-go/commit"
 	"github.com/lintingzhen/commitizen-go/git"
 	"github.com/lintingzhen/commitizen-go/tui"
-	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -47,25 +45,6 @@ func getCommitCmd() *cobra.Command {
 	return commitCmd
 }
 
-// loadMessageConfig merges the built-in default with any user override from .git-czrc.
-func loadMessageConfig() (tui.CommitMessageConfig, error) {
-	cfg, err := commit.DefaultMessageConfig()
-	if err != nil {
-		return tui.CommitMessageConfig{}, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	sub := viper.Sub("message")
-	if sub == nil {
-		log.Print("no message config in config file, using defaults")
-	} else {
-		if err := sub.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) { dc.ZeroFields = true }); err != nil {
-			log.Printf("ill message in config file, err=%v", err)
-		}
-	}
-
-	return cfg, nil
-}
-
 func commitRunE(_ *cobra.Command, _ []string) error {
 	client, err := git.NewClient()
 	if err != nil {
@@ -88,12 +67,7 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		Author:     commitAuthor,
 	}
 
-	msgCfg, err := loadMessageConfig()
-	if err != nil {
-		return fmt.Errorf("load message config: %w", err)
-	}
-
-	msg, opts, err := commit.FillOutForm(msgCfg, defaults)
+	msg, opts, err := commit.FillOutForm(appConfig, defaults)
 	if err != nil {
 		return fmt.Errorf("failed to fill form: %w", err)
 	}
@@ -110,16 +84,20 @@ func commitRunE(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	printCommitSummary(summary)
+	printCommitSummary(&summary)
 
 	return nil
 }
 
-func printCommitSummary(s git.CommitSummary) {
+func printCommitSummary(s *git.CommitSummary) {
+	if s == nil {
+		return
+	}
 	ref := s.Branch
 	if s.IsRoot {
 		ref += " (root-commit)"
 	}
+
 	fmt.Printf("[%s %s] %s\n", ref, s.ShortHash, s.Subject)
 
 	if s.Files == 0 {
@@ -130,6 +108,7 @@ func printCommitSummary(s git.CommitSummary) {
 	if s.Files == 1 {
 		fileWord = "file"
 	}
+
 	line := fmt.Sprintf(" %d %s changed", s.Files, fileWord)
 
 	if s.Additions > 0 {
@@ -137,14 +116,18 @@ func printCommitSummary(s git.CommitSummary) {
 		if s.Additions == 1 {
 			word = "insertion"
 		}
+
 		line += fmt.Sprintf(", %d %s(+)", s.Additions, word)
 	}
+
 	if s.Deletions > 0 {
 		word := "deletions"
 		if s.Deletions == 1 {
 			word = "deletion"
 		}
+
 		line += fmt.Sprintf(", %d %s(-)", s.Deletions, word)
 	}
+
 	fmt.Println(line)
 }

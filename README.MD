@@ -105,35 +105,38 @@ Flags:
 
 Config file: `.git-czrc` (JSON) at repository root or `$HOME`. Repository root takes priority over home directory. You can also add the `.json` extension (`.git-czrc.json`).
 
-### Commit message
+The default configuration is embedded in [`config/default.json`](https://github.com/lintingzhen/commitizen-go/blob/master/config/default.json).
 
-The format is the same as the default config in [`commit/defaultConfig.go`](https://github.com/lintingzhen/commitizen-go/blob/master/commit/defaultConfig.go).
+### Commit types
 
-Type item:
+Override the list of commit types shown in the type selector:
+
 ```json
 {
-  "name": "type",
-  "desc": "Select the type of change that you're committing:",
-  "form": "select",
-  "options": [
-    { "name": "feat",     "desc": "feat: A new feature" },
-    { "name": "fix",      "desc": "fix: A bug fix" },
-    { "name": "docs",     "desc": "docs: Documentation only changes" },
-    { "name": "style",    "desc": "style: Changes that do not affect the meaning of the code" },
-    { "name": "refactor", "desc": "refactor: A code change that neither fixes a bug nor adds a feature" },
-    { "name": "perf",     "desc": "perf: A code change that improves performance" },
-    { "name": "test",     "desc": "test: Adding missing tests" },
-    { "name": "chore",    "desc": "chore: Changes to the build process or auxiliary tools" },
-    { "name": "revert",   "desc": "revert: Revert to a commit" },
-    { "name": "WIP",      "desc": "WIP: Work in progress" }
-  ],
-  "required": true
+  "commit_types": [
+    { "name": "feat",  "desc": "A new feature" },
+    { "name": "fix",   "desc": "A bug fix" },
+    { "name": "chore", "desc": "Build process or tooling changes" }
+  ]
 }
 ```
 
-Message template:
+### Commit message
+
+Override the form fields and/or the message template:
+
 ```json
-"template": "{{.type}}{{with .scope}}({{.}}){{end}}: {{.subject}}{{with .body}}\n\n{{.}}{{end}}{{with .footer}}\n\n{{.}}{{end}}"
+{
+  "commit_message": {
+    "items": [
+      { "name": "scope",   "desc": "Scope (users, db, poll…):", "form": "input" },
+      { "name": "subject", "desc": "Concise description. Imperative, lower case, no final dot:", "form": "input", "required": true },
+      { "name": "body",    "desc": "Motivation for the change:", "form": "multiline" },
+      { "name": "footer",  "desc": "Breaking changes and referenced issues:", "form": "multiline" }
+    ],
+    "template": "{{.type}}{{with .scope}}({{.}}){{end}}: {{.subject}}{{with .body}}\n\n{{.}}{{end}}{{with .footer}}\n\n{{.}}{{end}}"
+  }
+}
 ```
 
 ### Branch naming
@@ -158,12 +161,11 @@ To override the base branch (default: auto-detected from `origin/HEAD`, then `ma
 
 `git cz issue start` can fetch open issues assigned to you from a project tracker. Currently supported: **Redmine**.
 
-Add a `tracker` section to `.git-czrc`:
+Add an `issue_tracker` section to `.git-czrc`:
 
 ```json
 {
-  "message": {…},
-  "tracker": {
+  "issue_tracker": {
     "type": "redmine",
     "url": "https://redmine.example.com",
     "token": "YOUR_API_KEY",

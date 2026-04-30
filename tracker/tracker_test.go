@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lintingzhen/commitizen-go/config"
 	"github.com/lintingzhen/commitizen-go/tracker"
 )
 
@@ -17,11 +18,11 @@ func TestRegisterAndNew_happy(t *testing.T) {
 	t.Parallel()
 
 	const key = "stub-test-register"
-	tracker.Register(key, func(_ tracker.Config) (tracker.Tracker, error) {
+	tracker.Register(key, func(_ config.IssueTrackerConfig) (tracker.Tracker, error) {
 		return &stubTracker{}, nil
 	})
 
-	tr, err := tracker.New(tracker.Config{Type: key})
+	tr, err := tracker.New(config.IssueTrackerConfig{Type: key})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestRegisterAndNew_happy(t *testing.T) {
 func TestNew_unknownType(t *testing.T) {
 	t.Parallel()
 
-	_, err := tracker.New(tracker.Config{Type: "no-such-adapter-xyz"})
+	_, err := tracker.New(config.IssueTrackerConfig{Type: "no-such-adapter-xyz"})
 	if err == nil {
 		t.Fatal("expected error for unknown type, got nil")
 	}

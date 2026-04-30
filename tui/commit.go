@@ -9,30 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+
+	"github.com/lintingzhen/commitizen-go/config"
 )
-
-// CommitItemOption is a single selectable option within a CommitItem select field.
-type CommitItemOption struct {
-	Name string // value stored in the commit message template
-	Desc string // label shown to the user in the TUI
-}
-
-// CommitItem describes one field in the commit message form.
-// Value is written by the form after the user submits.
-type CommitItem struct {
-	Name     string             // key used in the message template
-	Desc     string             // prompt text shown to the user
-	Form     string             // field type: "select", "input", or "multiline"
-	Options  []CommitItemOption // options for "select" fields
-	Required bool               // whether the field must be non-empty
-	Value    string             // written by the form after submission
-}
-
-// CommitMessageConfig holds the ordered list of form fields and the Go template used to assemble the commit message.
-type CommitMessageConfig struct {
-	Items    []CommitItem
-	Template string
-}
 
 // CommitOption holds commit option values for the commit options group of the TUI.
 // Used both as flag-derived defaults (input) and as user selections (output).
@@ -52,13 +31,17 @@ func (o CommitOption) AnyOptionSet() bool {
 	return o.All || o.Amend || o.NoVerify || o.Signoff || o.AllowEmpty || o.Author != ""
 }
 
-var descStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#888888")).
-	PaddingLeft(1)
+var (
+	descStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		PaddingLeft(1)
+	titler = cases.Title(language.English, cases.NoLower)
+)
 
-// CommitMessageGroup builds the first commit form group from the given items.
-// Each item's Value is written by the form after the user submits.
-func CommitMessageGroup(items []CommitItem) *huh.Group {
+// CommitMessageGroup builds the first commit form group.
+// The type select is always first, populated from commitTypes and writing into selectedType.
+// Remaining fields come from items (scope, subject, body, footer).
+func CommitMessageGroup(commitTypes []config.CommitTypeOption, items []config.CommitItem, selectedType *string) *huh.Group {
 	requireValidator := func(s string) error {
 		if strings.TrimSpace(s) == "" {
 			return errors.New("required")
@@ -67,11 +50,28 @@ func CommitMessageGroup(items []CommitItem) *huh.Group {
 		return nil
 	}
 
-	msgFields := make([]huh.Field, 0, len(items))
+	typeOpts := make([]huh.Option[string], len(commitTypes))
+	for i, ct := range commitTypes {
+		typeOpts[i] = huh.NewOption(titleCase(ct.Name)+"\n"+descStyle.Render(ct.Desc), ct.Name)
+	}
+	if len(typeOpts) == 0 {
+		typeOpts = []huh.Option[string]{huh.NewOption("feat", "feat")}
+	}
+
+	msgFields := make([]huh.Field, 0, len(items)+1)
+	msgFields = append(msgFields,
+		huh.NewSelect[string]().
+			Title("Type:").
+			Options(typeOpts...).
+			Value(selectedType),
+	)
+
 	for i := range items {
 		f := &items[i]
 		switch f.Form {
 		case "select":
+			// For select items, Desc carries the prompt text (unlike input/multiline
+			// where Name is title-cased and Desc is used as placeholder).
 			opts := make([]huh.Option[string], len(f.Options))
 			for j, opt := range f.Options {
 				name := titleCase(opt.Name)
@@ -97,7 +97,7 @@ func CommitMessageGroup(items []CommitItem) *huh.Group {
 		case "multiline":
 			txt := huh.NewText().
 				Lines(2).
-				Title(strings.ToTitle(f.Name)).
+				Title(titleCase(f.Name)).
 				Placeholder(f.Desc).
 				Value(&f.Value)
 			if f.Required {
@@ -137,7 +137,5 @@ func CommitOptionsGroup(opt *CommitOption) *huh.Group {
 }
 
 func titleCase(s string) string {
-	c := cases.Title(language.English, cases.NoLower)
-
-	return c.String(s)
+	return titler.String(s)
 }

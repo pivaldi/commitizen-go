@@ -1,0 +1,111 @@
+package config
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+
+	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/viper"
+)
+
+//go:embed default.json
+var defaultJSON []byte
+
+// CommitTypeOption is a single commit type entry (e.g. "feat", "fix").
+type CommitTypeOption struct {
+	Name string `json:"name" mapstructure:"name"`
+	Desc string `json:"desc" mapstructure:"desc"`
+}
+
+// CommitItemOption is a selectable option within a CommitItem select field.
+type CommitItemOption struct {
+	Name string `json:"name" mapstructure:"name"`
+	Desc string `json:"desc" mapstructure:"desc"`
+}
+
+// CommitItem describes one field in the commit message form.
+// Value is written by the form after the user submits.
+type CommitItem struct {
+	Name     string             `json:"name"     mapstructure:"name"`
+	Desc     string             `json:"desc"     mapstructure:"desc"`
+	Form     string             `json:"form"     mapstructure:"form"`
+	Required bool               `json:"required" mapstructure:"required"`
+	Options  []CommitItemOption `json:"options"  mapstructure:"options"`
+	Value string `json:"-" mapstructure:"-"` // runtime state; never serialised
+}
+
+// CommitMessageConfig holds the ordered list of form fields and the Go template
+// used to assemble the commit message.
+type CommitMessageConfig struct {
+	Items    []CommitItem `json:"items"    mapstructure:"items"`
+	Template string       `json:"template" mapstructure:"template"`
+}
+
+// BranchConfig holds branch-related settings.
+// Base is the branch new branches are cut from; empty means auto-detect.
+type BranchConfig struct {
+	Base string `json:"base" mapstructure:"base"`
+}
+
+// IssueTrackerConfig holds connection parameters for one tracker instance.
+// Never log values of this type — Token is a secret.
+type IssueTrackerConfig struct {
+	Type             string `json:"type"               mapstructure:"type"`
+	URL              string `json:"url"                mapstructure:"url"`
+	Token            string `json:"token"              mapstructure:"token"`
+	InProgressStatus string `json:"in_progress_status" mapstructure:"in_progress_status"`
+}
+
+// AppConfig is the top-level configuration for the application.
+type AppConfig struct {
+	CommitTypes   []CommitTypeOption  `json:"commit_types"   mapstructure:"commit_types"`
+	CommitMessage CommitMessageConfig `json:"commit_message" mapstructure:"commit_message"`
+	Branch        BranchConfig        `json:"branch"         mapstructure:"branch"`
+	IssueTracker  IssueTrackerConfig  `json:"issue_tracker"  mapstructure:"issue_tracker"`
+}
+
+// Load parses the embedded default.json then overlays any values present in the
+// global viper instance. Each config section is handled individually so that a
+// partial override (e.g. only commit_message.items) preserves unset defaults.
+// viper.Sub is avoided because it silently returns nil for array-typed keys.
+func Load() (AppConfig, error) {
+	var cfg AppConfig
+	if err := json.Unmarshal(defaultJSON, &cfg); err != nil {
+		return AppConfig{}, fmt.Errorf("parse default config: %w", err)
+	}
+
+	// zeroSlice zeroes the target before decoding so that a user-supplied slice
+	// fully replaces the default instead of being appended to it.
+	zeroSlice := func(dc *mapstructure.DecoderConfig) { dc.ZeroFields = true }
+
+	if viper.IsSet("commit_types") {
+		if err := viper.UnmarshalKey("commit_types", &cfg.CommitTypes, zeroSlice); err != nil {
+			return AppConfig{}, fmt.Errorf("unmarshal commit_types: %w", err)
+		}
+	}
+
+	if viper.IsSet("commit_message.items") {
+		if err := viper.UnmarshalKey("commit_message.items", &cfg.CommitMessage.Items, zeroSlice); err != nil {
+			return AppConfig{}, fmt.Errorf("unmarshal commit_message.items: %w", err)
+		}
+	}
+
+	if viper.IsSet("commit_message.template") {
+		cfg.CommitMessage.Template = viper.GetString("commit_message.template")
+	}
+
+	if viper.IsSet("branch.base") {
+		cfg.Branch.Base = viper.GetString("branch.base")
+	}
+
+	// issue_tracker has no slice fields, so zeroSlice is not needed — absent
+	// keys keep their defaults under mapstructure's merge behaviour.
+	if viper.IsSet("issue_tracker") {
+		if err := viper.UnmarshalKey("issue_tracker", &cfg.IssueTracker); err != nil {
+			return AppConfig{}, fmt.Errorf("unmarshal issue_tracker: %w", err)
+		}
+	}
+
+	return cfg, nil
+}

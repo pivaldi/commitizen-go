@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	lgtable "github.com/charmbracelet/lipgloss/table"
 	"github.com/lintingzhen/commitizen-go/git"
+	"github.com/lintingzhen/commitizen-go/issue"
 	"github.com/lintingzhen/commitizen-go/store"
 	"github.com/lintingzhen/commitizen-go/tui"
 	"github.com/spf13/cobra"
@@ -215,7 +216,7 @@ func runBranchTable(rows []store.BranchRow) error {
 	st.Header = lipgloss.NewStyle().Bold(true).Foreground(branchTableHeaderColor).Padding(0, 1)
 	t.SetStyles(st)
 
-	if _, err := tea.NewProgram(branchTableModel{table: t}).Run(); err != nil {
+	if _, err := tea.NewProgram(&branchTableModel{table: t}).Run(); err != nil {
 		return fmt.Errorf("run table: %w", err)
 	}
 
@@ -228,8 +229,6 @@ func toBranchStatus(s string) store.BranchStatus {
 		return store.BranchStatusInProgress
 	case "merged":
 		return store.BranchStatusMerged
-	case "all", "":
-		return store.BranchStatusAll
 	default:
 		return store.BranchStatusAll
 	}
@@ -240,9 +239,9 @@ type branchTableModel struct {
 	table btable.Model
 }
 
-func (m branchTableModel) Init() tea.Cmd { return nil }
+func (*branchTableModel) Init() tea.Cmd { return nil }
 
-func (m branchTableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *branchTableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "q", "ctrl+c":
@@ -256,7 +255,7 @@ func (m branchTableModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m branchTableModel) View() string {
+func (m *branchTableModel) View() string {
 	return m.table.View() + "\n\nPress q to quit."
 }
 
@@ -271,7 +270,7 @@ func getBranchNewCmd() *cobra.Command {
 
 // branchNewRunE delegates to runIssueStart with manual-first (tracker toggle defaults to NO).
 func branchNewRunE(cmd *cobra.Command, _ []string) error {
-	return runIssueStart(cmd.Context(), issueStartFlags{trackerFirst: false})
+	return runIssueStart(cmd, issue.IssueStartFlags{TrackerFirst: false})
 }
 
 type branchPruneFlags struct {
@@ -416,11 +415,13 @@ func renderPruneSummary(w io.Writer, result pruneResult) {
 		}
 	}
 
-	if len(result.toMerge) > 0 {
-		fmt.Fprintln(w, "Will mark merged (tip reachable from base):")
-		for _, r := range result.toMerge {
-			fmt.Fprintf(w, "  ~ %s\n", r.BranchName)
-		}
+	if len(result.toMerge) == 0 {
+		return
+	}
+
+	fmt.Fprintln(w, "Will mark merged (tip reachable from base):")
+	for _, r := range result.toMerge {
+		fmt.Fprintf(w, "  ~ %s\n", r.BranchName)
 	}
 }
 

@@ -2,7 +2,6 @@ package commit
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"slices"
@@ -10,30 +9,21 @@ import (
 	"text/template"
 
 	"github.com/charmbracelet/huh"
+
+	"github.com/lintingzhen/commitizen-go/config"
 	"github.com/lintingzhen/commitizen-go/tui"
 )
 
-// DefaultMessageConfig returns the parsed built-in message configuration.
-// Callers may overlay user config on top before passing it to FillOutForm.
-func DefaultMessageConfig() (tui.CommitMessageConfig, error) {
-	config := struct{ Message tui.CommitMessageConfig }{}
-	if err := json.Unmarshal([]byte(defaultConfig), &config); err != nil {
-		return tui.CommitMessageConfig{}, fmt.Errorf("parse default config: %w", err)
-	}
-
-	return config.Message, nil
-}
-
 // FillOutForm presents the commit TUI form.
-// Group 1: commit message fields (type, scope, subject, body, footer).
+// Group 1: type select + commit message fields (scope, subject, body, footer).
 // Group 2: commit options (author, all, amend, no-verify, signoff, allow-empty).
 //
-//	Group 2 is skipped when defaults.anyOptionSet() is true (flags were passed).
+//	Group 2 is skipped when defaults.AnyOptionSet() is true (flags were passed).
 //
 // Returns the assembled commit message bytes and the (possibly user-modified) options.
-func FillOutForm(cfg tui.CommitMessageConfig, defaults tui.CommitOption) ([]byte, tui.CommitOption, error) {
+func FillOutForm(cfg config.AppConfig, defaults tui.CommitOption) ([]byte, tui.CommitOption, error) {
 	form, extractMsg, extractOpts := loadForm(cfg, defaults)
-	tmplText := cfg.Template
+	tmplText := cfg.CommitMessage.Template
 
 	if err := form.Run(); err != nil {
 		return nil, tui.CommitOption{}, fmt.Errorf("failed to run the form: %w", err)
@@ -58,12 +48,14 @@ func FillOutForm(cfg tui.CommitMessageConfig, defaults tui.CommitOption) ([]byte
 func BuildAuthorList(all []string, current string) []string {
 	seen := make(map[string]struct{})
 	var unique []string
+
 	for _, a := range all {
 		if _, ok := seen[a]; !ok {
 			seen[a] = struct{}{}
 			unique = append(unique, a)
 		}
 	}
+
 	slices.Sort(unique)
 
 	if current == "" {
@@ -86,14 +78,14 @@ func assembleMessage(buf *bytes.Buffer, tmplText string, answers map[string]any)
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
+
 	for k, v := range answers {
 		if s, ok := v.(string); ok {
 			answers[k] = strings.TrimSpace(s)
 		}
 	}
 
-	err = tmpl.Execute(buf, answers)
-	if err != nil {
+	if err := tmpl.Execute(buf, answers); err != nil {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
@@ -101,24 +93,26 @@ func assembleMessage(buf *bytes.Buffer, tmplText string, answers map[string]any)
 }
 
 func loadForm(
-	cfg tui.CommitMessageConfig,
+	cfg config.AppConfig,
 	defaults tui.CommitOption,
 ) (form *huh.Form, extractMsg func() map[string]any, extractOpts func() tui.CommitOption) {
-	log.Printf("message tmpl: %s", cfg.Template)
+	log.Printf("message tmpl: %s", cfg.CommitMessage.Template)
 
-	// --- Group 1: commit message fields ---
+	var selectedType string
+
 	extractMsg = func() map[string]any {
-		m := make(map[string]any, len(cfg.Items))
-		for i := range cfg.Items {
-			m[cfg.Items[i].Name] = cfg.Items[i].Value
+		m := make(map[string]any, len(cfg.CommitMessage.Items)+1)
+		m["type"] = selectedType
+
+		for i := range cfg.CommitMessage.Items {
+			m[cfg.CommitMessage.Items[i].Name] = cfg.CommitMessage.Items[i].Value
 		}
 
 		return m
 	}
 
-	groups := []*huh.Group{tui.CommitMessageGroup(cfg.Items)}
+	groups := []*huh.Group{tui.CommitMessageGroup(cfg.CommitTypes, cfg.CommitMessage.Items, &selectedType)}
 
-	// --- Group 2: commit options (skipped when any flag was passed) ---
 	opts := defaults
 	if !defaults.AnyOptionSet() {
 		groups = append(groups, tui.CommitOptionsGroup(&opts))

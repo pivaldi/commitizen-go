@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/lintingzhen/commitizen-go/config"
 )
 
 // Issue is the tracker-agnostic representation of a work item.
@@ -15,27 +17,21 @@ type Issue struct {
 	Status      string
 }
 
-// Config holds the connection parameters for one tracker instance.
-type Config struct {
-	Type             string
-	URL              string
-	Token            string
-	InProgressStatus string
-}
-
 // Tracker is the contract every adapter must satisfy.
 type Tracker interface {
+	// ListIssues retrieves the issues from the tracker
 	ListIssues(ctx context.Context) ([]Issue, error)
+	// UpdateIssueStatus updates the status from the given issueID
 	UpdateIssueStatus(ctx context.Context, issueID, statusName string) error
 }
 
 var (
 	registryMu sync.RWMutex
-	registry   = map[string]func(Config) (Tracker, error){}
+	registry   = make(map[string]func(config.IssueTrackerConfig) (Tracker, error), 0)
 )
 
 // Register adds a factory function for the named tracker type.
-func Register(name string, fn func(Config) (Tracker, error)) {
+func Register(name string, fn func(config.IssueTrackerConfig) (Tracker, error)) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
@@ -43,7 +39,7 @@ func Register(name string, fn func(Config) (Tracker, error)) {
 }
 
 // New constructs a Tracker from cfg using the registered factory.
-func New(cfg Config) (Tracker, error) {
+func New(cfg config.IssueTrackerConfig) (Tracker, error) {
 	registryMu.RLock()
 	fn, ok := registry[cfg.Type]
 	registryMu.RUnlock()

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lintingzhen/commitizen-go/tracker"
+	"github.com/lintingzhen/commitizen-go/config"
 	"github.com/lintingzhen/commitizen-go/tracker/redmine"
 )
 
@@ -24,7 +24,7 @@ func TestListIssues_success(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	adapter, err := redmine.New(tracker.Config{URL: srv.URL, Token: "test-key"})
+	adapter, err := redmine.New(config.IssueTrackerConfig{URL: srv.URL, Token: "test-key"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestListIssues_authFailure(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	adapter, err := redmine.New(tracker.Config{URL: srv.URL, Token: "bad-key"})
+	adapter, err := redmine.New(config.IssueTrackerConfig{URL: srv.URL, Token: "bad-key"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestUpdateIssueStatus_success(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	adapter, err := redmine.New(tracker.Config{URL: srv.URL, Token: "key"})
+	adapter, err := redmine.New(config.IssueTrackerConfig{URL: srv.URL, Token: "key"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestUpdateIssueStatus_statusNotFound(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	adapter, err := redmine.New(tracker.Config{URL: srv.URL, Token: "key"})
+	adapter, err := redmine.New(config.IssueTrackerConfig{URL: srv.URL, Token: "key"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

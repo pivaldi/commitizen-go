@@ -10,6 +10,7 @@ import (
 
 	redminelib "github.com/mattn/go-redmine"
 
+	"github.com/lintingzhen/commitizen-go/config"
 	"github.com/lintingzhen/commitizen-go/tracker"
 )
 
@@ -30,12 +31,12 @@ type issuesResponse struct {
 
 type redmineAdapter struct {
 	client *redminelib.Client
-	cfg    tracker.Config
+	cfg    config.IssueTrackerConfig
 	http   *http.Client
 }
 
 // New creates a Redmine adapter from cfg.
-func New(cfg tracker.Config) (tracker.Tracker, error) {
+func New(cfg config.IssueTrackerConfig) (tracker.Tracker, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("redmine: URL is required")
 	}
@@ -53,7 +54,7 @@ func (a *redmineAdapter) ListIssues(ctx context.Context) ([]tracker.Issue, error
 	base := strings.TrimRight(a.cfg.URL, "/")
 	url := fmt.Sprintf("%s/issues.json?assigned_to_id=me&status_id=open&limit=100", base)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("build redmine issues request: %w", err)
 	}
@@ -113,12 +114,14 @@ func (a *redmineAdapter) UpdateIssueStatus(_ context.Context, issueID, statusNam
 	found := false
 
 	for _, s := range statuses {
-		if strings.EqualFold(s.Name, statusName) {
-			statusID = s.Id
-			found = true
-
-			break
+		if !strings.EqualFold(s.Name, statusName) {
+			continue
 		}
+
+		statusID = s.Id
+		found = true
+
+		break
 	}
 
 	if !found {
